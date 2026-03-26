@@ -3,9 +3,14 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(__dirname, '../../');
 
-// Load .env.local from project root (two levels up from src/config/)
-dotenv.config({ path: path.resolve(__dirname, '../../.env.local') });
+// Load env file based on environment:
+//  - Production (Render/cloud): vars are injected directly — no file needed
+//  - Development: .env.local takes precedence over .env
+// dotenv silently ignores missing files, so this is always safe.
+dotenv.config({ path: path.join(root, '.env.local') });
+dotenv.config({ path: path.join(root, '.env') });
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const isProd = NODE_ENV === 'production';
@@ -17,7 +22,7 @@ const missing = REQUIRED.filter((key) => !process.env[key]);
 if (missing.length > 0) {
   throw new Error(
     `[env] Missing required environment variables: ${missing.join(', ')}. ` +
-      `Check your .env.local file.`
+      `Set them in .env.local (development) or in your hosting platform's environment settings (production).`
   );
 }
 
