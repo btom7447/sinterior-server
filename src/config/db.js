@@ -22,6 +22,7 @@ const connectDB = async () => {
     });
   } catch (err) {
     console.error('[MongoDB] Initial connection failed:', err.message);
+    console.error('[MongoDB] Hint: check Atlas IP whitelist — add 0.0.0.0/0 to allow all IPs (or Render static IP)');
     process.exit(1);
   }
 };
