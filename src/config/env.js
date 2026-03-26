@@ -20,10 +20,12 @@ const REQUIRED = ['MONGO_URI', 'JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET'];
 
 const missing = REQUIRED.filter((key) => !process.env[key]);
 if (missing.length > 0) {
-  throw new Error(
-    `[env] Missing required environment variables: ${missing.join(', ')}. ` +
-      `Set them in .env.local (development) or in your hosting platform's environment settings (production).`
+  console.error(
+    `\n[FATAL] Missing required environment variables: ${missing.join(', ')}\n` +
+    `  → In development: add them to .env.local\n` +
+    `  → In production (Render): add them in Dashboard → Environment\n`
   );
+  process.exit(1);
 }
 
 // ── Parsed & validated config ────────────────────────────────────────────────
