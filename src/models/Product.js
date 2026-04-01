@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { resolveImageUrls } from '../utils/resolveUrl.js';
 
 const productSchema = new mongoose.Schema(
   {
@@ -74,6 +75,18 @@ const productSchema = new mongoose.Schema(
   {
     timestamps: true,
     versionKey: false,
+    toJSON: {
+      transform(_doc, ret) {
+        ret.images = resolveImageUrls(ret.images);
+        return ret;
+      },
+    },
+    toObject: {
+      transform(_doc, ret) {
+        ret.images = resolveImageUrls(ret.images);
+        return ret;
+      },
+    },
   }
 );
 

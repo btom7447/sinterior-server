@@ -5,6 +5,7 @@ import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
 import config from '../config/env.js';
+import { resolveUploadUrl } from '../utils/resolveUrl.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -102,5 +103,5 @@ export const uploadAvatar = asyncHandler(async (req, res) => {
     throw new AppError('Profile not found.', 404);
   }
 
-  sendSuccess(res, { avatarUrl, profile }, 'Avatar uploaded successfully.');
+  sendSuccess(res, { avatarUrl: resolveUploadUrl(avatarUrl), profile }, 'Avatar uploaded successfully.');
 });

@@ -7,6 +7,7 @@ import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
+import { resolveUploadUrl } from '../utils/resolveUrl.js';
 
 /**
  * Check if two profiles are allowed to chat (share a job or order).
@@ -130,7 +131,7 @@ export const getConversations = asyncHandler(async (req, res) => {
         ? {
             id: otherProfile._id,
             fullName: otherProfile.fullName,
-            avatarUrl: otherProfile.avatarUrl,
+            avatarUrl: resolveUploadUrl(otherProfile.avatarUrl),
           }
         : null,
     };
@@ -253,5 +254,5 @@ export const searchUserByEmail = asyncHandler(async (req, res) => {
   }
 
   const allowed = await canChat(senderProfile._id, profile._id);
-  sendSuccess(res, { users: [{ ...profile, canChat: allowed }] }, 'Search results.');
+  sendSuccess(res, { users: [{ ...profile, avatarUrl: resolveUploadUrl(profile.avatarUrl), canChat: allowed }] }, 'Search results.');
 });

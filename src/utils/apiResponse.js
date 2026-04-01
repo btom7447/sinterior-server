@@ -1,3 +1,5 @@
+import { resolveUploads } from './resolveUrl.js';
+
 /**
  * Send a successful JSON response.
  *
@@ -10,7 +12,7 @@ export const sendSuccess = (res, data, message = 'Success', statusCode = 200) =>
   res.status(statusCode).json({
     status: 'success',
     message,
-    data,
+    data: resolveUploads(data),
   });
 };
 
@@ -27,6 +29,6 @@ export const sendPaginated = (res, data, pagination, message = 'Success') => {
     status: 'success',
     message,
     pagination,
-    data,
+    data: resolveUploads(data),
   });
 };

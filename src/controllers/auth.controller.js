@@ -15,6 +15,7 @@ import {
   clearRefreshCookie,
 } from '../utils/generateTokens.js';
 import config from '../config/env.js';
+import { resolveUploadUrl } from '../utils/resolveUrl.js';
 
 // ── Helper: build the safe user payload returned to the client ────────────────
 const buildUserPayload = (user, profile) => ({
@@ -26,7 +27,7 @@ const buildUserPayload = (user, profile) => ({
     ? {
         id: profile._id,
         fullName: profile.fullName,
-        avatarUrl: profile.avatarUrl,
+        avatarUrl: resolveUploadUrl(profile.avatarUrl),
         phone: profile.phone || null,
         bio: profile.bio || null,
         city: profile.city,

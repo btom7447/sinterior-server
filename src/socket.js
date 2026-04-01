@@ -1,6 +1,7 @@
 import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import config from './config/env.js';
+import { resolveUploadUrl } from './utils/resolveUrl.js';
 import Profile from './models/Profile.js';
 import Message from './models/Message.js';
 import User from './models/User.js';
@@ -107,7 +108,7 @@ export default function initSocket(server) {
       if (!profile) return next(new Error('Profile not found'));
 
       socket.user = { id: decoded.id, role: user.role };
-      socket.profile = profile;
+      socket.profile = { ...profile, avatarUrl: resolveUploadUrl(profile.avatarUrl) };
       next();
     } catch {
       next(new Error('Invalid or expired token'));
@@ -161,7 +162,7 @@ export default function initSocket(server) {
           _id: message._id,
           conversationId,
           senderId: { _id: profileId, fullName: socket.profile.fullName, avatarUrl: socket.profile.avatarUrl },
-          receiverId: { _id: receiver._id, fullName: receiver.fullName, avatarUrl: receiver.avatarUrl },
+          receiverId: { _id: receiver._id, fullName: receiver.fullName, avatarUrl: resolveUploadUrl(receiver.avatarUrl) },
           content: message.content,
           isRead: false,
           createdAt: message.createdAt,
@@ -254,7 +255,7 @@ export default function initSocket(server) {
 
         // Check if chat is allowed
         const allowed = await canChat(profileId, profile._id);
-        ack?.({ users: [{ ...profile, canChat: allowed }] });
+        ack?.({ users: [{ ...profile, avatarUrl: resolveUploadUrl(profile.avatarUrl), canChat: allowed }] });
       } catch {
         ack?.({ users: [] });
       }

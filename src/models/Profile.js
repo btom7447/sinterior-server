@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { resolveUploadUrl } from '../utils/resolveUrl.js';
 
 const profileSchema = new mongoose.Schema(
   {
@@ -55,6 +56,18 @@ const profileSchema = new mongoose.Schema(
   {
     timestamps: true,
     versionKey: false,
+    toJSON: {
+      transform(_doc, ret) {
+        if (ret.avatarUrl) ret.avatarUrl = resolveUploadUrl(ret.avatarUrl);
+        return ret;
+      },
+    },
+    toObject: {
+      transform(_doc, ret) {
+        if (ret.avatarUrl) ret.avatarUrl = resolveUploadUrl(ret.avatarUrl);
+        return ret;
+      },
+    },
   }
 );
 

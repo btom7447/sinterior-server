@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { resolveUploadUrl } from '../utils/resolveUrl.js';
 
 const portfolioItemSchema = new mongoose.Schema(
   {
@@ -115,6 +116,40 @@ const artisanProfileSchema = new mongoose.Schema(
   {
     timestamps: true,
     versionKey: false,
+    toJSON: {
+      transform(_doc, ret) {
+        if (ret.portfolio) {
+          ret.portfolio = ret.portfolio.map((item) => ({
+            ...item,
+            url: resolveUploadUrl(item.url),
+          }));
+        }
+        if (ret.certifications) {
+          ret.certifications = ret.certifications.map((cert) => ({
+            ...cert,
+            fileUrl: resolveUploadUrl(cert.fileUrl),
+          }));
+        }
+        return ret;
+      },
+    },
+    toObject: {
+      transform(_doc, ret) {
+        if (ret.portfolio) {
+          ret.portfolio = ret.portfolio.map((item) => ({
+            ...item,
+            url: resolveUploadUrl(item.url),
+          }));
+        }
+        if (ret.certifications) {
+          ret.certifications = ret.certifications.map((cert) => ({
+            ...cert,
+            fileUrl: resolveUploadUrl(cert.fileUrl),
+          }));
+        }
+        return ret;
+      },
+    },
   }
 );
 
