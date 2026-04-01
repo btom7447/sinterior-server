@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { body, param, query } from 'express-validator';
-import { getConversations, getMessages, sendMessage } from '../controllers/chat.controller.js';
+import { getConversations, getMessages, sendMessage, searchUserByEmail } from '../controllers/chat.controller.js';
 import { protect } from '../middleware/auth.js';
 import validate from '../middleware/validate.js';
 
@@ -8,6 +8,9 @@ const router = Router();
 
 // All chat routes require authentication
 router.use(protect);
+
+// ── GET /api/v1/chat/search ───────────────────────────────────────────────────
+router.get('/search', searchUserByEmail);
 
 // ── GET /api/v1/chat/conversations ────────────────────────────────────────────
 router.get('/conversations', getConversations);

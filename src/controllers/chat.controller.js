@@ -1,10 +1,34 @@
 import mongoose from 'mongoose';
 import Message from '../models/Message.js';
 import Profile from '../models/Profile.js';
+import Job from '../models/Job.js';
+import Order from '../models/Order.js';
 import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
+
+/**
+ * Check if two profiles are allowed to chat (share a job or order).
+ */
+const canChat = async (profileIdA, profileIdB) => {
+  const a = profileIdA.toString();
+  const b = profileIdB.toString();
+  const job = await Job.findOne({
+    $or: [
+      { clientId: a, artisanId: b },
+      { clientId: b, artisanId: a },
+    ],
+  }).lean();
+  if (job) return true;
+  const order = await Order.findOne({
+    $or: [
+      { buyerId: a, 'items.supplierId': b },
+      { buyerId: b, 'items.supplierId': a },
+    ],
+  }).lean();
+  return !!order;
+};
 
 /**
  * Build a deterministic conversationId from two profile IDs.
@@ -182,6 +206,12 @@ export const sendMessage = asyncHandler(async (req, res) => {
     throw new AppError('Recipient not found.', 404);
   }
 
+  // Check chat access — must share a job or order
+  const allowed = await canChat(senderProfile._id, receiverId);
+  if (!allowed) {
+    throw new AppError('You can only chat with artisans you\'ve hired or sellers you\'ve ordered from.', 403);
+  }
+
   const conversationId = buildConversationId(senderProfile._id, receiverProfile._id);
 
   const message = await Message.create({
@@ -198,4 +228,30 @@ export const sendMessage = asyncHandler(async (req, res) => {
   ]);
 
   sendSuccess(res, { message: populated }, 'Message sent.', 201);
+});
+
+// ── GET /api/v1/chat/search?email=... ────────────────────────────────────────
+export const searchUserByEmail = asyncHandler(async (req, res) => {
+  const { email } = req.query;
+  if (!email?.trim()) {
+    return sendSuccess(res, { users: [] }, 'No results.');
+  }
+
+  const senderProfile = await Profile.findOne({ userId: req.user.id });
+  if (!senderProfile) throw new AppError('Profile not found.', 404);
+
+  // Import User model
+  const User = (await import('../models/User.js')).default;
+  const user = await User.findOne({ email: email.trim().toLowerCase() }).select('_id').lean();
+  if (!user) return sendSuccess(res, { users: [] }, 'No results.');
+
+  const profile = await Profile.findOne({ userId: user._id })
+    .select('_id fullName avatarUrl city')
+    .lean();
+  if (!profile || profile._id.toString() === senderProfile._id.toString()) {
+    return sendSuccess(res, { users: [] }, 'No results.');
+  }
+
+  const allowed = await canChat(senderProfile._id, profile._id);
+  sendSuccess(res, { users: [{ ...profile, canChat: allowed }] }, 'Search results.');
 });

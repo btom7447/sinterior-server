@@ -23,6 +23,14 @@ import propertyRoutes from './routes/property.routes.js';
 import orderRoutes from './routes/order.routes.js';
 import chatRoutes from './routes/chat.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
+import dashboardRoutes from './routes/dashboard.routes.js';
+import reviewRoutes from './routes/review.routes.js';
+import bookmarkRoutes from './routes/bookmark.routes.js';
+import jobRoutes from './routes/job.routes.js';
+import supplierRoutes from './routes/supplier.routes.js';
+import contactRoutes from './routes/contact.routes.js';
+import appointmentRoutes from './routes/appointment.routes.js';
+import projectRoutes from './routes/project.routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -105,6 +113,14 @@ app.use('/api/v1/properties', propertyRoutes);
 app.use('/api/v1/orders', orderRoutes);
 app.use('/api/v1/chat', chatRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
+app.use('/api/v1/dashboard', dashboardRoutes);
+app.use('/api/v1/reviews', reviewRoutes);
+app.use('/api/v1/bookmarks', bookmarkRoutes);
+app.use('/api/v1/jobs', jobRoutes);
+app.use('/api/v1/appointments', appointmentRoutes);
+app.use('/api/v1/suppliers', supplierRoutes);
+app.use('/api/v1/contact', contactRoutes);
+app.use('/api/v1/projects', projectRoutes);
 
 // ── 11. 404 — catch-all for unmatched routes ──────────────────────────────────
 app.use((req, _res, next) => {

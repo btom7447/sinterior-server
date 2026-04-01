@@ -15,6 +15,7 @@ import mongoose from 'mongoose';
 import config from './src/config/env.js';
 import connectDB from './src/config/db.js';
 import app from './src/app.js';
+import initSocket from './src/socket.js';
 
 // ── Uncaught exception guard ──────────────────────────────────────────────────
 // Must be registered BEFORE any async code runs
@@ -26,6 +27,10 @@ process.on('uncaughtException', (err) => {
 
 // ── Create HTTP server ────────────────────────────────────────────────────────
 const server = http.createServer(app);
+
+// ── Attach Socket.IO ─────────────────────────────────────────────────────────
+const io = initSocket(server);
+app.set('io', io);
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 const shutdown = async (signal) => {
@@ -73,7 +78,7 @@ const boot = async () => {
 
   server.listen(config.PORT, () => {
     console.log(
-      `[Server] Sinterior API running in ${config.NODE_ENV} mode on port ${config.PORT}`
+      `[Server] Sintherior API running in ${config.NODE_ENV} mode on port ${config.PORT}`
     );
     console.log(`[Server] Health check → http://localhost:${config.PORT}/health`);
   });
