@@ -37,8 +37,8 @@ export const generateRefreshToken = (payload) => {
 export const setRefreshCookie = (res, token) => {
   res.cookie('refreshToken', token, {
     httpOnly: true,
-    secure: config.isProd,       // HTTPS only in production
-    sameSite: 'strict',
+    secure: config.isProd,
+    sameSite: config.isProd ? 'none' : 'strict', // 'none' required for cross-site cookies in production
     maxAge: REFRESH_COOKIE_MAX_AGE_MS,
     path: '/',
   });
@@ -53,7 +53,7 @@ export const clearRefreshCookie = (res) => {
   res.clearCookie('refreshToken', {
     httpOnly: true,
     secure: config.isProd,
-    sameSite: 'strict',
+    sameSite: config.isProd ? 'none' : 'strict',
     path: '/',
   });
 };
