@@ -51,6 +51,37 @@ export const updateMe = asyncHandler(async (req, res) => {
   sendSuccess(res, { profile }, 'Profile updated.');
 });
 
+// ── GET /api/v1/profiles/me/settings ──────────────────────────────────────────
+export const getSettings = asyncHandler(async (req, res) => {
+  const profile = await Profile.findOne({ userId: req.user.id }).select('settings');
+  if (!profile) throw new AppError('Profile not found.', 404);
+  sendSuccess(res, { settings: profile.settings }, 'Settings retrieved.');
+});
+
+// ── PATCH /api/v1/profiles/me/settings ───────────────────────────────────────
+export const updateSettings = asyncHandler(async (req, res) => {
+  const ALLOWED = ['notifications', 'darkMode', 'autoRenew', 'landRegistry', 'landInsurance', 'fireAlarm'];
+  const updates = {};
+  ALLOWED.forEach((key) => {
+    if (typeof req.body[key] === 'boolean') {
+      updates[`settings.${key}`] = req.body[key];
+    }
+  });
+
+  if (Object.keys(updates).length === 0) {
+    throw new AppError('No valid settings provided.', 400);
+  }
+
+  const profile = await Profile.findOneAndUpdate(
+    { userId: req.user.id },
+    { $set: updates },
+    { new: true, runValidators: true }
+  ).select('settings');
+
+  if (!profile) throw new AppError('Profile not found.', 404);
+  sendSuccess(res, { settings: profile.settings }, 'Settings updated.');
+});
+
 // ── POST /api/v1/profiles/me/avatar ───────────────────────────────────────────
 // Requires: uploadSingle('avatar') + resizeImage(400, 400) middleware upstream
 export const uploadAvatar = asyncHandler(async (req, res) => {

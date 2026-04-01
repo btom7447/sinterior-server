@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { body } from 'express-validator';
-import { getMe, updateMe, uploadAvatar } from '../controllers/profile.controller.js';
+import { getMe, updateMe, uploadAvatar, getSettings, updateSettings } from '../controllers/profile.controller.js';
 import { protect } from '../middleware/auth.js';
 import { uploadLimiter } from '../middleware/rateLimiter.js';
 import { uploadSingle, resizeImage } from '../middleware/upload.js';
@@ -52,6 +52,12 @@ router.patch(
   validate,
   updateMe
 );
+
+// ── GET /api/v1/profiles/me/settings ──────────────────────────────────────────
+router.get('/me/settings', getSettings);
+
+// ── PATCH /api/v1/profiles/me/settings ───────────────────────────────────────
+router.patch('/me/settings', updateSettings);
 
 // ── POST /api/v1/profiles/me/avatar ───────────────────────────────────────────
 router.post(

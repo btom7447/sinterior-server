@@ -43,6 +43,14 @@ const profileSchema = new mongoose.Schema(
       enum: ['client', 'artisan', 'supplier'],
       default: 'client',
     },
+    settings: {
+      notifications: { type: Boolean, default: true },
+      darkMode: { type: Boolean, default: false },
+      autoRenew: { type: Boolean, default: true },
+      landRegistry: { type: Boolean, default: true },
+      landInsurance: { type: Boolean, default: true },
+      fireAlarm: { type: Boolean, default: false },
+    },
   },
   {
     timestamps: true,
