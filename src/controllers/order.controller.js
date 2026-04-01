@@ -1,6 +1,7 @@
 import Order from '../models/Order.js';
 import Product from '../models/Product.js';
 import Profile from '../models/Profile.js';
+import Notification from '../models/Notification.js';
 import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
@@ -49,6 +50,7 @@ export const create = asyncHandler(async (req, res) => {
 
     return {
       productId: product._id,
+      supplierId: product.supplierId,
       name: product.name,
       quantity,
       priceAtOrder,
@@ -63,7 +65,21 @@ export const create = asyncHandler(async (req, res) => {
     city,
     note,
     paymentMethod,
+    paymentStatus: 'paid', // dummy payment — always succeeds
   });
+
+  // Notify each unique supplier about the new order
+  const supplierIds = [...new Set(enrichedItems.map((i) => i.supplierId.toString()))];
+  const supplierProfiles = await Profile.find({ _id: { $in: supplierIds } }).select('userId fullName');
+  for (const supplier of supplierProfiles) {
+    await Notification.create({
+      userId: supplier.userId,
+      title: 'New Order Received',
+      body: `${buyerProfile.fullName} placed an order (₦${totalAmount.toLocaleString('en-NG')}). Check your orders to confirm.`,
+      type: 'order',
+      data: { orderId: order._id },
+    });
+  }
 
   sendSuccess(res, { order }, 'Order placed successfully.', 201);
 });
@@ -76,10 +92,19 @@ export const list = asyncHandler(async (req, res) => {
   }
 
   const { page, limit, skip } = getPagination(req.query);
+  const role = req.user.role;
 
   // Clients see their own orders; suppliers see orders that contain their products
-  // For simplicity, all non-admin users see orders where they are the buyer
-  const filter = { buyerId: profile._id };
+  let filter;
+  if (role === 'supplier') {
+    filter = { 'items.supplierId': profile._id };
+  } else {
+    filter = { buyerId: profile._id };
+  }
+
+  if (req.query.status) {
+    filter.status = req.query.status;
+  }
 
   const [total, orders] = await Promise.all([
     Order.countDocuments(filter),
@@ -110,8 +135,11 @@ export const getById = asyncHandler(async (req, res) => {
     throw new AppError('Order not found.', 404);
   }
 
-  // Only the buyer may view this order (admins can extend this later)
-  if (order.buyerId._id.toString() !== profile._id.toString()) {
+  // Buyer or supplier (whose product is in the order) may view
+  const isBuyer = order.buyerId._id.toString() === profile._id.toString();
+  const isSupplier = order.items.some((item) => item.supplierId.toString() === profile._id.toString());
+
+  if (!isBuyer && !isSupplier) {
     throw new AppError('You are not authorised to view this order.', 403);
   }
 
@@ -126,9 +154,27 @@ export const updateStatus = asyncHandler(async (req, res) => {
     throw new AppError('status is required.', 400);
   }
 
-  const order = await Order.findById(req.params.id);
+  const profile = await Profile.findOne({ userId: req.user.id });
+  if (!profile) {
+    throw new AppError('Profile not found.', 404);
+  }
+
+  const order = await Order.findById(req.params.id).populate('buyerId', 'userId fullName');
   if (!order) {
     throw new AppError('Order not found.', 404);
+  }
+
+  // Authorization: buyer can cancel; supplier can confirm/ship/deliver
+  const isBuyer = order.buyerId._id.toString() === profile._id.toString();
+  const isSupplier = order.items.some((item) => item.supplierId.toString() === profile._id.toString());
+
+  if (!isBuyer && !isSupplier) {
+    throw new AppError('You are not authorised to update this order.', 403);
+  }
+
+  // Buyers can only cancel
+  if (isBuyer && !isSupplier && status !== 'cancelled') {
+    throw new AppError('Buyers can only cancel orders.', 403);
   }
 
   const allowedNext = VALID_STATUS_TRANSITIONS[order.status];
@@ -146,6 +192,18 @@ export const updateStatus = asyncHandler(async (req, res) => {
 
   order.status = status;
   await order.save();
+
+  // Notify the other party about the status change
+  const notifyUserId = isBuyer ? null : order.buyerId.userId;
+  if (notifyUserId) {
+    await Notification.create({
+      userId: notifyUserId,
+      title: 'Order Status Updated',
+      body: `Your order has been updated to "${status}".`,
+      type: 'order',
+      data: { orderId: order._id, status },
+    });
+  }
 
   sendSuccess(res, { order }, `Order status updated to "${status}".`);
 });

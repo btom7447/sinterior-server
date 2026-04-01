@@ -50,7 +50,6 @@ router.get(
 // ── PATCH /api/v1/orders/:id/status ──────────────────────────────────────────
 router.patch(
   '/:id/status',
-  restrictTo('supplier', 'artisan'),
   [
     param('id').isMongoId().withMessage('Invalid order ID'),
     body('status')

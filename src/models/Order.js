@@ -7,6 +7,11 @@ const orderItemSchema = new mongoose.Schema(
       ref: 'Product',
       required: [true, 'productId is required on order item'],
     },
+    supplierId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Profile',
+      required: [true, 'supplierId is required on order item'],
+    },
     name: {
       type: String,
       required: [true, 'Product name snapshot is required'],
@@ -89,6 +94,7 @@ const orderSchema = new mongoose.Schema(
 );
 
 orderSchema.index({ buyerId: 1 });
+orderSchema.index({ 'items.supplierId': 1 });
 orderSchema.index({ status: 1 });
 orderSchema.index({ createdAt: -1 });
 

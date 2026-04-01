@@ -27,6 +27,8 @@ const buildUserPayload = (user, profile) => ({
         id: profile._id,
         fullName: profile.fullName,
         avatarUrl: profile.avatarUrl,
+        phone: profile.phone || null,
+        bio: profile.bio || null,
         city: profile.city,
         state: profile.state,
       }
