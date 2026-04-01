@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import helmet from 'helmet';
 import cors from 'cors';
 import mongoSanitize from 'express-mongo-sanitize';
-import hpp from 'hpp';
+// hpp removed — incompatible with Node 22+ (req.query is read-only)
 import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
@@ -75,8 +75,6 @@ app.use(cookieParser());
 // Strip MongoDB operators ($where, $gt, etc.) from req.body / req.params / req.query
 app.use(mongoSanitize());
 
-// Prevent HTTP parameter pollution (keeps the last duplicate query param)
-app.use(hpp());
 
 // ── 5. HTTP request logging ───────────────────────────────────────────────────
 app.use(morgan(config.isProd ? 'combined' : 'dev'));
