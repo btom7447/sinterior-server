@@ -1,15 +1,32 @@
 import { Router } from 'express';
 import { body, query, param } from 'express-validator';
 import {
+  list,
   getNearby,
   getById,
   updateOnboarding,
   updateLocation,
+  uploadPortfolio,
+  uploadCertification,
 } from '../controllers/artisan.controller.js';
 import { protect, restrictTo } from '../middleware/auth.js';
+import { uploadMultiple, uploadSingle, resizeImage } from '../middleware/upload.js';
 import validate from '../middleware/validate.js';
 
 const router = Router();
+
+// ── GET /api/v1/artisans ─────────────────────────────────────────────────────
+router.get(
+  '/',
+  [
+    query('category').optional().isString().trim(),
+    query('search').optional().isString().trim(),
+    query('page').optional().isInt({ min: 1 }),
+    query('limit').optional().isInt({ min: 1, max: 100 }),
+  ],
+  validate,
+  list
+);
 
 // ── GET /api/v1/artisans/nearby ───────────────────────────────────────────────
 router.get(
@@ -23,6 +40,26 @@ router.get(
   ],
   validate,
   getNearby
+);
+
+// ── POST /api/v1/artisans/portfolio ──────────────────────────────────────────
+router.post(
+  '/portfolio',
+  protect,
+  restrictTo('artisan'),
+  uploadMultiple('images', 10),
+  resizeImage(800, 0, 80),
+  uploadPortfolio
+);
+
+// ── POST /api/v1/artisans/certifications ────────────────────────────────────
+router.post(
+  '/certifications',
+  protect,
+  restrictTo('artisan'),
+  uploadSingle('file'),
+  resizeImage(800, 0, 80),
+  uploadCertification
 );
 
 // ── GET /api/v1/artisans/:id ──────────────────────────────────────────────────

@@ -4,6 +4,47 @@ import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
+import config from '../config/env.js';
+
+// ── GET /api/v1/artisans ─────────────────────────────────────────────────────
+// General list — no geo required. Supports ?category, ?search, ?limit, ?page
+export const list = asyncHandler(async (req, res) => {
+  const { category, search } = req.query;
+  const { page, limit, skip } = getPagination(req.query);
+
+  const filter = { isAvailable: true };
+  if (category) {
+    filter.skillCategory = { $regex: category, $options: 'i' };
+  }
+
+  const [total, artisans] = await Promise.all([
+    ArtisanProfile.countDocuments(filter),
+    ArtisanProfile.find(filter)
+      .populate({ path: 'profileId', select: 'fullName avatarUrl phone city state bio' })
+      .sort({ rating: -1, reviewCount: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+  ]);
+
+  // If search term provided, filter in-memory (profile fields aren't indexed)
+  let results = artisans;
+  if (search) {
+    const q = search.toLowerCase();
+    results = artisans.filter((a) => {
+      const profile = a.profileId;
+      return (
+        a.skill?.toLowerCase().includes(q) ||
+        a.skillCategory?.toLowerCase().includes(q) ||
+        a.city?.toLowerCase().includes(q) ||
+        profile?.fullName?.toLowerCase().includes(q)
+      );
+    });
+  }
+
+  const pagination = buildPaginationMeta(search ? results.length : total, page, limit);
+  sendPaginated(res, results, pagination, 'Artisans retrieved.');
+});
 
 // ── GET /api/v1/artisans/nearby ───────────────────────────────────────────────
 export const getNearby = asyncHandler(async (req, res) => {
@@ -154,6 +195,48 @@ export const updateOnboarding = asyncHandler(async (req, res) => {
   }
 
   sendSuccess(res, { artisan }, 'Artisan profile updated.');
+});
+
+// ── POST /api/v1/artisans/portfolio ──────────────────────────────────────────
+// Upload portfolio images (multipart). Returns array of URLs.
+export const uploadPortfolio = asyncHandler(async (req, res) => {
+  if (!req.files || req.files.length === 0) {
+    throw new AppError('No files uploaded. Please attach at least one image.', 400);
+  }
+
+  const profile = await Profile.findOne({ userId: req.user.id });
+  if (!profile) throw new AppError('Profile not found.', 404);
+
+  const artisan = await ArtisanProfile.findOne({ profileId: profile._id });
+  if (!artisan) throw new AppError('Artisan profile not found.', 404);
+
+  const newItems = req.files.map((file, i) => ({
+    url: `/${config.UPLOAD_DIR}/${file.filename}`,
+    caption: req.body.captions?.[i] || '',
+  }));
+
+  artisan.portfolio.push(...newItems);
+  await artisan.save();
+
+  sendSuccess(res, { portfolio: artisan.portfolio }, 'Portfolio images uploaded.');
+});
+
+// ── POST /api/v1/artisans/certifications ────────────────────────────────────
+// Upload certification file. Returns the URL.
+export const uploadCertification = asyncHandler(async (req, res) => {
+  if (!req.file) {
+    throw new AppError('No file uploaded.', 400);
+  }
+
+  const profile = await Profile.findOne({ userId: req.user.id });
+  if (!profile) throw new AppError('Profile not found.', 404);
+
+  const artisan = await ArtisanProfile.findOne({ profileId: profile._id });
+  if (!artisan) throw new AppError('Artisan profile not found.', 404);
+
+  const fileUrl = `/${config.UPLOAD_DIR}/${req.file.filename}`;
+
+  sendSuccess(res, { fileUrl }, 'Certification file uploaded.');
 });
 
 // ── PATCH /api/v1/artisans/location ──────────────────────────────────────────
