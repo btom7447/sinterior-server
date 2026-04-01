@@ -77,9 +77,11 @@ const canChat = async (profileIdA, profileIdB) => {
  * Initialize Socket.IO on the HTTP server.
  */
 export default function initSocket(server) {
+  const allowedOrigins = config.CLIENT_URL.split(',').map((u) => u.trim());
+
   const io = new Server(server, {
     cors: {
-      origin: config.CLIENT_URL,
+      origin: allowedOrigins,
       credentials: true,
     },
     pingTimeout: 60000,

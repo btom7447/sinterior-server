@@ -46,11 +46,13 @@ app.use(
 // ── 2. CORS ───────────────────────────────────────────────────────────────────
 // In development allow any localhost port (handles Next.js picking 3001, 3002, etc.)
 // In production only the exact CLIENT_URL is accepted.
+const allowedOrigins = config.CLIENT_URL.split(',').map((u) => u.trim());
+
 const allowedOrigin = (origin, callback) => {
   if (!origin) return callback(null, true); // same-origin / curl / Postman
   const localhostRE = /^http:\/\/localhost:\d+$/;
   if (!config.isProd && localhostRE.test(origin)) return callback(null, true);
-  if (origin === config.CLIENT_URL) return callback(null, true);
+  if (allowedOrigins.includes(origin)) return callback(null, true);
   callback(new Error(`CORS: origin '${origin}' is not allowed`));
 };
 
