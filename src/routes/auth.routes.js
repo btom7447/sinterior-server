@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { body } from 'express-validator';
 import { register, login, refresh, logout, me, forgotPassword, resetPassword, changePassword } from '../controllers/auth.controller.js';
 import { protect } from '../middleware/auth.js';
-import { authLimiter } from '../middleware/rateLimiter.js';
+// TODO: re-enable after testing
+// import { authLimiter } from '../middleware/rateLimiter.js';
 import validate from '../middleware/validate.js';
 
 const router = Router();
@@ -10,7 +11,7 @@ const router = Router();
 // ── POST /api/v1/auth/register ────────────────────────────────────────────────
 router.post(
   '/register',
-  authLimiter,
+  // authLimiter,
   [
     body('email')
       .isEmail()
@@ -51,7 +52,7 @@ router.post(
 // ── POST /api/v1/auth/login ───────────────────────────────────────────────────
 router.post(
   '/login',
-  authLimiter,
+  // authLimiter,
   [
     body('email')
       .isEmail()
@@ -79,7 +80,7 @@ router.get('/me', protect, me);
 // ── POST /api/v1/auth/forgot-password ─────────────────────────────────────────
 router.post(
   '/forgot-password',
-  authLimiter,
+  // authLimiter,
   [body('email').isEmail().withMessage('A valid email address is required').normalizeEmail()],
   validate,
   forgotPassword
@@ -88,7 +89,7 @@ router.post(
 // ── POST /api/v1/auth/reset-password/:token ────────────────────────────────────
 router.post(
   '/reset-password/:token',
-  authLimiter,
+  // authLimiter,
   [
     body('password')
       .isLength({ min: 8 })

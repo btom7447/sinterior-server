@@ -10,7 +10,8 @@ import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
 
 import config from './config/env.js';
-import { generalLimiter } from './middleware/rateLimiter.js';
+// TODO: re-enable after testing
+// import { generalLimiter } from './middleware/rateLimiter.js';
 import errorHandler from './middleware/errorHandler.js';
 import AppError from './utils/AppError.js';
 
@@ -83,7 +84,8 @@ app.use(morgan(config.isProd ? 'combined' : 'dev'));
 app.use(compression());
 
 // ── 7. General rate limiter on all API routes ─────────────────────────────────
-app.use('/api', generalLimiter);
+// TODO: re-enable rate limiting after testing
+// app.use('/api', generalLimiter);
 
 // ── 8. Static file serving for uploads ───────────────────────────────────────
 // Files are served at /uploads/<filename>
