@@ -21,10 +21,13 @@ const messageSchema = new mongoose.Schema(
     },
     content: {
       type: String,
-      required: [true, 'Message content is required'],
       trim: true,
       maxlength: [2000, 'Message cannot exceed 2000 characters'],
+      default: '',
     },
+    media: [{
+      type: String, // relative URL to uploaded image
+    }],
     isRead: {
       type: Boolean,
       default: false,
@@ -35,6 +38,14 @@ const messageSchema = new mongoose.Schema(
     versionKey: false,
   }
 );
+
+// At least content or media must be present
+messageSchema.pre('validate', function (next) {
+  if (!this.content?.trim() && (!this.media || this.media.length === 0)) {
+    return next(new Error('Message must have content or media.'));
+  }
+  next();
+});
 
 messageSchema.index({ conversationId: 1, createdAt: -1 });
 messageSchema.index({ senderId: 1 });

@@ -5,9 +5,6 @@ import { resolveUploadUrl } from './utils/resolveUrl.js';
 import Profile from './models/Profile.js';
 import Message from './models/Message.js';
 import User from './models/User.js';
-import Job from './models/Job.js';
-import Order from './models/Order.js';
-
 /**
  * Build a deterministic conversationId from two profile IDs.
  */
@@ -43,35 +40,6 @@ const emitToUser = (io, profileId, event, data) => {
       io.to(sid).emit(event, data);
     }
   }
-};
-
-/**
- * Check if two users are allowed to chat.
- * Allowed if: they share a job OR an order.
- */
-const canChat = async (profileIdA, profileIdB) => {
-  const a = profileIdA.toString();
-  const b = profileIdB.toString();
-
-  // Check if they share a job
-  const job = await Job.findOne({
-    $or: [
-      { clientId: a, artisanId: b },
-      { clientId: b, artisanId: a },
-    ],
-  }).lean();
-  if (job) return true;
-
-  // Check if they share an order (buyer placed order with seller's products)
-  const order = await Order.findOne({
-    $or: [
-      { buyerId: a, 'items.supplierId': b },
-      { buyerId: b, 'items.supplierId': a },
-    ],
-  }).lean();
-  if (order) return true;
-
-  return false;
 };
 
 /**
@@ -142,14 +110,6 @@ export default function initSocket(server) {
           .select('_id fullName avatarUrl')
           .lean();
         if (!receiver) return ack?.({ error: 'Recipient not found' });
-
-        // Check chat access
-        const allowed = await canChat(profileId, receiverId);
-        if (!allowed) {
-          return ack?.({
-            error: 'You can only chat with artisans you\'ve hired or sellers you\'ve ordered from',
-          });
-        }
 
         const conversationId = buildConversationId(profileId, receiverId);
 
@@ -256,9 +216,7 @@ export default function initSocket(server) {
           .lean();
         if (!profile || profile._id.toString() === profileId) return ack?.({ users: [] });
 
-        // Check if chat is allowed
-        const allowed = await canChat(profileId, profile._id);
-        ack?.({ users: [{ ...profile, avatarUrl: resolveUploadUrl(profile.avatarUrl), canChat: allowed }] });
+        ack?.({ users: [{ ...profile, avatarUrl: resolveUploadUrl(profile.avatarUrl), canChat: true }] });
       } catch {
         ack?.({ users: [] });
       }

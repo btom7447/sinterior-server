@@ -69,7 +69,7 @@ const buildUserPayload = (user, profile) => ({
 
 // ── POST /api/v1/auth/register ────────────────────────────────────────────────
 export const register = asyncHandler(async (req, res) => {
-  const { email, password, role = 'client', fullName, city, state } = req.body;
+  const { email, password, role = 'client', fullName, city, state, phone } = req.body;
 
   // Check for duplicate email before starting transaction
   const existing = await User.findOne({ email: email.toLowerCase().trim() });
@@ -103,6 +103,7 @@ export const register = asyncHandler(async (req, res) => {
         {
           userId: user._id,
           fullName: fullName || '',
+          phone: phone || '',
           city: city || '',
           state: state || '',
           role,

@@ -6,8 +6,8 @@ const router = Router();
 
 router.use(protect);
 
-router.get('/', getBookmarks);
-router.post('/toggle', toggleBookmark);
-router.get('/check/:artisanId', checkBookmark);
+router.get('/', getBookmarks);           // GET /bookmarks?type=artisan|product|property
+router.post('/toggle', toggleBookmark);   // POST /bookmarks/toggle { entityId, type }
+router.get('/check/:entityId', checkBookmark); // GET /bookmarks/check/:entityId
 
 export default router;

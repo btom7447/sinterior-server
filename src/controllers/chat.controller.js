@@ -1,51 +1,12 @@
 import mongoose from 'mongoose';
 import Message from '../models/Message.js';
 import Profile from '../models/Profile.js';
-import Job from '../models/Job.js';
-import Order from '../models/Order.js';
 import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import { resolveUploadUrl } from '../utils/resolveUrl.js';
-
-/**
- * Check if two profiles are allowed to chat.
- * Allow if either party is an artisan or supplier (service provider),
- * or if they share a job or order.
- */
-const canChat = async (profileIdA, profileIdB) => {
-  // Allow chatting with artisans/suppliers directly
-  const [profileA, profileB] = await Promise.all([
-    Profile.findById(profileIdA).select('role').lean(),
-    Profile.findById(profileIdB).select('role').lean(),
-  ]);
-  const serviceRoles = ['artisan', 'supplier'];
-  if (
-    (profileA && serviceRoles.includes(profileA.role)) ||
-    (profileB && serviceRoles.includes(profileB.role))
-  ) {
-    return true;
-  }
-
-  // Fallback: check for shared job or order
-  const a = profileIdA.toString();
-  const b = profileIdB.toString();
-  const job = await Job.findOne({
-    $or: [
-      { clientId: a, artisanId: b },
-      { clientId: b, artisanId: a },
-    ],
-  }).lean();
-  if (job) return true;
-  const order = await Order.findOne({
-    $or: [
-      { buyerId: a, 'items.supplierId': b },
-      { buyerId: b, 'items.supplierId': a },
-    ],
-  }).lean();
-  return !!order;
-};
+import config from '../config/env.js';
 
 /**
  * Build a deterministic conversationId from two profile IDs.
@@ -209,8 +170,11 @@ export const sendMessage = asyncHandler(async (req, res) => {
     throw new AppError('receiverId is required.', 400);
   }
 
-  if (!content || !content.trim()) {
-    throw new AppError('Message content cannot be empty.', 400);
+  // Get media from uploaded files (if any)
+  const media = req.files?.map((f) => `/${config.UPLOAD_DIR}/${f.filename}`) || [];
+
+  if ((!content || !content.trim()) && media.length === 0) {
+    throw new AppError('Message must have content or media.', 400);
   }
 
   if (receiverId.toString() === senderProfile._id.toString()) {
@@ -223,19 +187,14 @@ export const sendMessage = asyncHandler(async (req, res) => {
     throw new AppError('Recipient not found.', 404);
   }
 
-  // Check chat access — must share a job or order
-  const allowed = await canChat(senderProfile._id, receiverId);
-  if (!allowed) {
-    throw new AppError('You can only chat with artisans you\'ve hired or sellers you\'ve ordered from.', 403);
-  }
-
   const conversationId = buildConversationId(senderProfile._id, receiverProfile._id);
 
   const message = await Message.create({
     conversationId,
     senderId: senderProfile._id,
     receiverId: receiverProfile._id,
-    content: content.trim(),
+    content: content?.trim() || '',
+    media: media.length > 0 ? media : undefined,
     isRead: false,
   });
 
@@ -269,6 +228,5 @@ export const searchUserByEmail = asyncHandler(async (req, res) => {
     return sendSuccess(res, { users: [] }, 'No results.');
   }
 
-  const allowed = await canChat(senderProfile._id, profile._id);
-  sendSuccess(res, { users: [{ ...profile, avatarUrl: resolveUploadUrl(profile.avatarUrl), canChat: allowed }] }, 'Search results.');
+  sendSuccess(res, { users: [{ ...profile, avatarUrl: resolveUploadUrl(profile.avatarUrl), canChat: true }] }, 'Search results.');
 });

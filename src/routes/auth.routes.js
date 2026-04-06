@@ -43,6 +43,12 @@ router.post(
       .trim()
       .isLength({ max: 80 })
       .withMessage('State cannot exceed 80 characters'),
+    body('phone')
+      .optional()
+      .isString()
+      .trim()
+      .isLength({ max: 30 })
+      .withMessage('Phone cannot exceed 30 characters'),
   ],
   validate,
   register

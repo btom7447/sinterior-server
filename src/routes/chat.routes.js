@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { body, param, query } from 'express-validator';
 import { getConversations, getMessages, sendMessage, searchUserByEmail } from '../controllers/chat.controller.js';
 import { protect } from '../middleware/auth.js';
+import { uploadMultiple, resizeImage } from '../middleware/upload.js';
 import validate from '../middleware/validate.js';
 
 const router = Router();
@@ -32,8 +33,11 @@ router.get(
 );
 
 // ── POST /api/v1/chat/messages ────────────────────────────────────────────────
+// Supports text-only (JSON) and text+images (multipart/form-data)
 router.post(
   '/messages',
+  uploadMultiple('media', 4),
+  resizeImage(1200, 0, 80),
   [
     body('receiverId')
       .notEmpty()
@@ -41,12 +45,11 @@ router.post(
       .isMongoId()
       .withMessage('receiverId must be a valid ID'),
     body('content')
-      .notEmpty()
-      .withMessage('Message content is required')
+      .optional()
       .isString()
       .trim()
-      .isLength({ min: 1, max: 2000 })
-      .withMessage('Message must be between 1 and 2000 characters'),
+      .isLength({ max: 2000 })
+      .withMessage('Message cannot exceed 2000 characters'),
   ],
   validate,
   sendMessage
