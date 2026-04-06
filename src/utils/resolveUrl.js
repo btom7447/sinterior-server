@@ -27,11 +27,17 @@ const IMAGE_ARRAY_FIELDS = new Set(['images']);
 /**
  * Recursively resolve all upload-path fields in a plain object (from .lean() or aggregation).
  * Mutates in place for performance and returns the same reference.
+ * Uses a WeakSet to avoid infinite recursion on circular references (e.g. Mongoose docs).
  */
-export const resolveUploads = (obj) => {
+export const resolveUploads = (obj, _seen) => {
   if (!obj || typeof obj !== 'object') return obj;
+
+  const seen = _seen || new WeakSet();
+  if (seen.has(obj)) return obj;
+  seen.add(obj);
+
   if (Array.isArray(obj)) {
-    obj.forEach(resolveUploads);
+    obj.forEach((item) => resolveUploads(item, seen));
     return obj;
   }
   for (const key of Object.keys(obj)) {
@@ -44,7 +50,7 @@ export const resolveUploads = (obj) => {
         if (item.url) item.url = resolveUploadUrl(item.url);
       });
     } else if (typeof obj[key] === 'object' && obj[key] !== null) {
-      resolveUploads(obj[key]);
+      resolveUploads(obj[key], seen);
     }
   }
   return obj;
