@@ -10,8 +10,7 @@ import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
 
 import config from './config/env.js';
-// TODO: re-enable after testing
-// import { generalLimiter } from './middleware/rateLimiter.js';
+import { generalLimiter } from './middleware/rateLimiter.js';
 import errorHandler from './middleware/errorHandler.js';
 import AppError from './utils/AppError.js';
 
@@ -32,6 +31,7 @@ import supplierRoutes from './routes/supplier.routes.js';
 import contactRoutes from './routes/contact.routes.js';
 import appointmentRoutes from './routes/appointment.routes.js';
 import projectRoutes from './routes/project.routes.js';
+import paymentRoutes from './routes/payment.routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -84,8 +84,7 @@ app.use(morgan(config.isProd ? 'combined' : 'dev'));
 app.use(compression());
 
 // ── 7. General rate limiter on all API routes ─────────────────────────────────
-// TODO: re-enable rate limiting after testing
-// app.use('/api', generalLimiter);
+app.use('/api', generalLimiter);
 
 // ── 8. Static file serving for uploads ───────────────────────────────────────
 // Files are served at /uploads/<filename>
@@ -123,6 +122,7 @@ app.use('/api/v1/appointments', appointmentRoutes);
 app.use('/api/v1/suppliers', supplierRoutes);
 app.use('/api/v1/contact', contactRoutes);
 app.use('/api/v1/projects', projectRoutes);
+app.use('/api/v1/payments', paymentRoutes);
 
 // ── 11. 404 — catch-all for unmatched routes ──────────────────────────────────
 app.use((req, _res, next) => {

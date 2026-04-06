@@ -2,8 +2,7 @@ import { Router } from 'express';
 import { body } from 'express-validator';
 import { getMe, updateMe, uploadAvatar, getSettings, updateSettings } from '../controllers/profile.controller.js';
 import { protect } from '../middleware/auth.js';
-// TODO: re-enable after testing
-// import { uploadLimiter } from '../middleware/rateLimiter.js';
+import { uploadLimiter } from '../middleware/rateLimiter.js';
 import { uploadSingle, resizeImage } from '../middleware/upload.js';
 import validate from '../middleware/validate.js';
 
@@ -63,7 +62,7 @@ router.patch('/me/settings', updateSettings);
 // ── POST /api/v1/profiles/me/avatar ───────────────────────────────────────────
 router.post(
   '/me/avatar',
-  // uploadLimiter,
+  uploadLimiter,
   uploadSingle('avatar'),
   resizeImage(400, 400, 85),
   uploadAvatar

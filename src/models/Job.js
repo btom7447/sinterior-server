@@ -37,6 +37,11 @@ const jobSchema = new mongoose.Schema(
       enum: ['pending', 'accepted', 'in_progress', 'completed', 'cancelled'],
       default: 'pending',
     },
+    paymentStatus: {
+      type: String,
+      enum: ['pending', 'paid', 'failed'],
+      default: 'pending',
+    },
     startDate: Date,
     endDate: Date,
   },

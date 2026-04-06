@@ -23,7 +23,15 @@ const productSchema = new mongoose.Schema(
       type: String,
       trim: true,
       required: [true, 'Category is required'],
-      maxlength: [100, 'Category cannot exceed 100 characters'],
+      enum: {
+        values: [
+          'Lightings & Electrical', 'Panels', 'Wallpaper', 'Doors', 'Walls',
+          'Cement', 'Steel & Iron', 'Tiles & Flooring', 'Paints', 'Roofing & Ceiling',
+          'Smart Home', 'Furniture', 'Plumbing', 'Aggregates', 'Wood & Timber',
+          'Automobile', 'Laundromat',
+        ],
+        message: '{VALUE} is not a valid category',
+      },
     },
     price: {
       type: Number,
@@ -40,15 +48,14 @@ const productSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    quantity: {
+      type: Number,
+      min: [0, 'Quantity cannot be negative'],
+      default: 1,
+    },
     inStock: {
       type: Boolean,
       default: true,
-    },
-    // Text-based location (city / state) — not geospatial for products
-    location: {
-      type: String,
-      trim: true,
-      maxlength: [150, 'Location cannot exceed 150 characters'],
     },
     // Flexible key-value specs (e.g. colour: red, weight: 5kg)
     specs: {

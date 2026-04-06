@@ -46,6 +46,10 @@ export const create = asyncHandler(async (req, res) => {
     if (!quantity || quantity < 1) {
       throw new AppError(`Invalid quantity for product "${product.name}".`, 400);
     }
+    // Check stock
+    if (product.quantity !== undefined && product.quantity < quantity) {
+      throw new AppError(`Insufficient stock for "${product.name}". Available: ${product.quantity}.`, 400);
+    }
     const priceAtOrder = product.price;
     totalAmount += priceAtOrder * quantity;
 
@@ -58,6 +62,23 @@ export const create = asyncHandler(async (req, res) => {
     };
   });
 
+  // Atomically decrement stock for each product
+  for (const item of enrichedItems) {
+    const result = await Product.findOneAndUpdate(
+      { _id: item.productId, quantity: { $gte: item.quantity } },
+      { $inc: { quantity: -item.quantity } },
+      { new: true }
+    );
+    if (!result) {
+      throw new AppError(`Product "${item.name}" is no longer available in the requested quantity.`, 400);
+    }
+    // Update inStock flag
+    if (result.quantity === 0) {
+      result.inStock = false;
+      await result.save();
+    }
+  }
+
   const order = await Order.create({
     buyerId: buyerProfile._id,
     items: enrichedItems,
@@ -66,7 +87,7 @@ export const create = asyncHandler(async (req, res) => {
     city,
     note,
     paymentMethod,
-    paymentStatus: 'paid', // dummy payment — always succeeds
+    paymentStatus: paymentMethod === 'Pay on Delivery' ? 'pending' : 'pending',
   });
 
   // Notify each unique supplier about the new order
@@ -104,7 +125,8 @@ export const list = asyncHandler(async (req, res) => {
     filter = { buyerId: profile._id };
   }
 
-  if (req.query.status) {
+  const validStatuses = ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled'];
+  if (req.query.status && validStatuses.includes(req.query.status)) {
     filter.status = req.query.status;
   }
 

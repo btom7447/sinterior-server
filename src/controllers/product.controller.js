@@ -13,7 +13,7 @@ export const list = asyncHandler(async (req, res) => {
   const filter = { isActive: true };
 
   if (category) {
-    filter.category = { $regex: category, $options: 'i' };
+    filter.category = category;
   }
 
   if (supplierId) {
@@ -60,8 +60,9 @@ export const create = asyncHandler(async (req, res) => {
     throw new AppError('Supplier profile not found.', 404);
   }
 
-  const { name, description, category, price, unit, location, specs, images } = req.body;
+  const { name, description, category, price, unit, quantity, specs, images } = req.body;
 
+  const qty = Math.max(0, parseInt(quantity, 10) || 1);
   const product = await Product.create({
     supplierId: profile._id,
     name,
@@ -69,7 +70,8 @@ export const create = asyncHandler(async (req, res) => {
     category,
     price,
     unit,
-    location,
+    quantity: qty,
+    inStock: qty > 0,
     specs,
     images: images || [],
   });
@@ -94,7 +96,7 @@ export const update = asyncHandler(async (req, res) => {
     throw new AppError('You are not authorised to update this product.', 403);
   }
 
-  const ALLOWED = ['name', 'description', 'category', 'price', 'unit', 'images', 'inStock', 'location', 'specs'];
+  const ALLOWED = ['name', 'description', 'category', 'price', 'unit', 'quantity', 'images', 'inStock', 'specs'];
   const updates = {};
   ALLOWED.forEach((field) => {
     if (req.body[field] !== undefined) updates[field] = req.body[field];

@@ -59,7 +59,10 @@ export const getMyJobs = asyncHandler(async (req, res) => {
   const role = req.user.role;
   const filter = role === 'artisan' ? { artisanId: profile._id } : { clientId: profile._id };
 
-  if (req.query.status) filter.status = req.query.status;
+  const validStatuses = ['pending', 'accepted', 'in_progress', 'completed', 'cancelled'];
+  if (req.query.status && validStatuses.includes(req.query.status)) {
+    filter.status = req.query.status;
+  }
 
   const [jobs, total] = await Promise.all([
     Job.find(filter)

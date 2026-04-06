@@ -31,6 +31,14 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    emailVerificationToken: {
+      type: String,
+      select: false,
+    },
+    emailVerificationExpires: {
+      type: Date,
+      select: false,
+    },
     // Hashed refresh token — raw token never stored
     refreshTokenHash: {
       type: String,

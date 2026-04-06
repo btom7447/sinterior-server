@@ -16,6 +16,37 @@ import {
 } from '../utils/generateTokens.js';
 import config from '../config/env.js';
 import { resolveUploadUrl } from '../utils/resolveUrl.js';
+import { sendEmail } from '../utils/sendEmail.js';
+
+// ── Helper: generate verification token, save to user, send email ────────────
+const sendVerificationEmail = async (user) => {
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  const hashedToken = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+  user.emailVerificationToken = hashedToken;
+  user.emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+  await user.save({ validateBeforeSave: false });
+
+  const verifyUrl = `${config.CLIENT_URL}/verify-email?token=${rawToken}`;
+
+  await sendEmail({
+    to: user.email,
+    subject: 'Verify your Sintherior account',
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+        <h2 style="color: #1a1a1a;">Welcome to Sintherior</h2>
+        <p>Please verify your email address to get started.</p>
+        <p>Click the button below to verify. This link expires in 24 hours.</p>
+        <a href="${verifyUrl}" style="display: inline-block; padding: 12px 24px; background: #1a1a1a; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 16px 0;">
+          Verify Email
+        </a>
+        <p style="color: #666; font-size: 13px;">If you didn't create a Sintherior account, you can safely ignore this email.</p>
+      </div>
+    `,
+  });
+
+  return rawToken;
+};
 
 // ── Helper: build the safe user payload returned to the client ────────────────
 const buildUserPayload = (user, profile) => ({
@@ -113,10 +144,15 @@ export const register = asyncHandler(async (req, res) => {
 
   setRefreshCookie(res, refreshToken);
 
+  // Send verification email (non-blocking — don't fail registration if email fails)
+  sendVerificationEmail(user).catch((err) => {
+    console.error('[AUTH] Failed to send verification email:', err.message);
+  });
+
   sendSuccess(
     res,
     { accessToken, user: buildUserPayload(user, profile) },
-    'Registration successful.',
+    'Registration successful. Please check your email to verify your account.',
     201
   );
 });
@@ -249,8 +285,22 @@ export const forgotPassword = asyncHandler(async (req, res) => {
     );
   }
 
-  // TODO: send email via your mail provider
-  // await sendEmail({ to: user.email, subject: 'Password reset', html: `...${resetUrl}...` });
+  // Send password reset email via Resend
+  await sendEmail({
+    to: user.email,
+    subject: 'Reset your Sintherior password',
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+        <h2 style="color: #1a1a1a;">Password Reset</h2>
+        <p>You requested a password reset for your Sintherior account.</p>
+        <p>Click the button below to set a new password. This link expires in 1 hour.</p>
+        <a href="${resetUrl}" style="display: inline-block; padding: 12px 24px; background: #1a1a1a; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 16px 0;">
+          Reset Password
+        </a>
+        <p style="color: #666; font-size: 13px;">If you didn't request this, you can safely ignore this email.</p>
+      </div>
+    `,
+  });
 
   sendSuccess(res, null, 'If that email exists, a reset link has been sent.');
 });
@@ -304,4 +354,49 @@ export const changePassword = asyncHandler(async (req, res) => {
   setRefreshCookie(res, refreshToken);
 
   sendSuccess(res, { accessToken }, 'Password changed successfully.');
+});
+
+// ── POST /api/v1/auth/send-verification ──────────────────────────────────────
+export const sendVerification = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user.id);
+  if (!user) throw new AppError('User not found.', 404);
+
+  if (user.isEmailVerified) {
+    return sendSuccess(res, null, 'Email is already verified.');
+  }
+
+  if (config.NODE_ENV === 'development') {
+    const rawToken = await sendVerificationEmail(user);
+    return sendSuccess(
+      res,
+      { verifyUrl: `${config.CLIENT_URL}/verify-email?token=${rawToken}`, token: rawToken },
+      'Verification email sent (dev — token returned for convenience).'
+    );
+  }
+
+  await sendVerificationEmail(user);
+  sendSuccess(res, null, 'Verification email sent. Please check your inbox.');
+});
+
+// ── GET /api/v1/auth/verify-email/:token ─────────────────────────────────────
+export const verifyEmail = asyncHandler(async (req, res) => {
+  const { token } = req.params;
+  const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+
+  const user = await User.findOne({
+    emailVerificationToken: hashedToken,
+    emailVerificationExpires: { $gt: Date.now() },
+  }).select('+emailVerificationToken +emailVerificationExpires');
+
+  if (!user) {
+    throw new AppError('Verification link is invalid or has expired.', 400);
+  }
+
+  user.isEmailVerified = true;
+  user.emailVerificationToken = undefined;
+  user.emailVerificationExpires = undefined;
+  await user.save({ validateBeforeSave: false });
+
+  // Redirect to frontend with success flag
+  res.redirect(`${config.CLIENT_URL}/verify-email?verified=true`);
 });

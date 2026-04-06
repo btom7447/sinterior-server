@@ -37,7 +37,7 @@ export const authLimiter = rateLimit({
  */
 export const uploadLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 20,
+  max: 50,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
