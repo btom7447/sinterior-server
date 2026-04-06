@@ -119,6 +119,9 @@ export default function initSocket(server) {
     const profileId = socket.profile._id.toString();
     addOnline(profileId, socket.id);
 
+    // Join a user-specific room for notifications (keyed by userId, not profileId)
+    socket.join(`user:${socket.user.id}`);
+
     // Notify contacts that this user is online
     socket.broadcast.emit('user:online', { profileId });
 

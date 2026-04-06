@@ -6,6 +6,7 @@ import Profile from '../models/Profile.js';
 import Notification from '../models/Notification.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import validate from '../middleware/validate.js';
+import { emitNotification } from '../utils/emitNotification.js';
 
 export const validateJob = [
   body('artisanId').isMongoId().withMessage('Valid artisan ID required'),
@@ -38,13 +39,14 @@ export const createJob = asyncHandler(async (req, res) => {
   });
 
   // Notify the artisan
-  await Notification.create({
+  const notification = await Notification.create({
     userId: artisanProfile.userId,
     title: 'New Job Request',
     body: `${clientProfile.fullName} sent you a job request: "${title}".`,
     type: 'job',
     data: { jobId: job._id },
   });
+  emitNotification(req, notification);
 
   res.status(201).json({ success: true, data: { job }, message: 'Job created.' });
 });
@@ -123,13 +125,14 @@ export const updateJobStatus = asyncHandler(async (req, res) => {
 
   // Notify the other party
   const notifyUser = isArtisan ? job.clientId : job.artisanId;
-  await Notification.create({
+  const statusNotification = await Notification.create({
     userId: notifyUser.userId,
     title: 'Job Status Updated',
     body: `Job "${job.title}" has been updated to "${status}" by ${isArtisan ? job.artisanId.fullName : job.clientId.fullName}.`,
     type: 'job',
     data: { jobId: job._id, status },
   });
+  emitNotification(req, statusNotification);
 
   res.status(200).json({ success: true, data: { job }, message: `Job ${status}.` });
 });

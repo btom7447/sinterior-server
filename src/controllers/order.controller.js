@@ -6,6 +6,7 @@ import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
+import { emitNotification } from '../utils/emitNotification.js';
 
 const VALID_STATUS_TRANSITIONS = {
   pending: ['confirmed', 'cancelled'],
@@ -72,13 +73,14 @@ export const create = asyncHandler(async (req, res) => {
   const supplierIds = [...new Set(enrichedItems.map((i) => i.supplierId.toString()))];
   const supplierProfiles = await Profile.find({ _id: { $in: supplierIds } }).select('userId fullName');
   for (const supplier of supplierProfiles) {
-    await Notification.create({
+    const notification = await Notification.create({
       userId: supplier.userId,
       title: 'New Order Received',
       body: `${buyerProfile.fullName} placed an order (₦${totalAmount.toLocaleString('en-NG')}). Check your orders to confirm.`,
       type: 'order',
       data: { orderId: order._id },
     });
+    emitNotification(req, notification);
   }
 
   sendSuccess(res, { order }, 'Order placed successfully.', 201);
@@ -196,13 +198,14 @@ export const updateStatus = asyncHandler(async (req, res) => {
   // Notify the other party about the status change
   const notifyUserId = isBuyer ? null : order.buyerId.userId;
   if (notifyUserId) {
-    await Notification.create({
+    const notification = await Notification.create({
       userId: notifyUserId,
       title: 'Order Status Updated',
       body: `Your order has been updated to "${status}".`,
       type: 'order',
       data: { orderId: order._id, status },
     });
+    emitNotification(req, notification);
   }
 
   sendSuccess(res, { order }, `Order status updated to "${status}".`);
