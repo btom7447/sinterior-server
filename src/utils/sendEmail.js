@@ -32,3 +32,14 @@ export const sendEmail = async ({ to, subject, html }) => {
 
   return data;
 };
+
+/**
+ * Fire-and-forget wrapper for transactional emails fired from request
+ * handlers. Never throws — logs errors and resolves to null on failure so a
+ * broken email provider can't break order/job/payment flows.
+ */
+export const sendEmailSafe = (args) =>
+  sendEmail(args).catch((err) => {
+    console.error('[EMAIL] sendEmailSafe swallowed error:', err.message);
+    return null;
+  });

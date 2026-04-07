@@ -3,8 +3,11 @@ import asyncHandler from '../utils/asyncHandler.js';
 import AppError from '../utils/AppError.js';
 import Review from '../models/Review.js';
 import Profile from '../models/Profile.js';
+import User from '../models/User.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import validate from '../middleware/validate.js';
+import { sendEmailSafe } from '../utils/sendEmail.js';
+import { newReview as newReviewEmail } from '../utils/emailTemplates.js';
 
 export const validateReview = [
   body('artisanId').isMongoId().withMessage('Valid artisan ID required'),
@@ -30,6 +33,19 @@ export const createReview = asyncHandler(async (req, res) => {
     comment,
     orderId,
   });
+
+  // Email the reviewed artisan
+  const artisanProfile = await Profile.findById(artisanId).select('userId');
+  if (artisanProfile?.userId) {
+    const artisanUser = await User.findById(artisanProfile.userId).select('email');
+    if (artisanUser?.email) {
+      const { subject, html } = newReviewEmail({
+        review,
+        reviewerName: profile.fullName,
+      });
+      sendEmailSafe({ to: artisanUser.email, subject, html });
+    }
+  }
 
   res.status(201).json({
     success: true,

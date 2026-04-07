@@ -3,10 +3,13 @@ import asyncHandler from '../utils/asyncHandler.js';
 import AppError from '../utils/AppError.js';
 import Job from '../models/Job.js';
 import Profile from '../models/Profile.js';
+import User from '../models/User.js';
 import Notification from '../models/Notification.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import validate from '../middleware/validate.js';
 import { emitNotification } from '../utils/emitNotification.js';
+import { sendEmailSafe } from '../utils/sendEmail.js';
+import { jobCreatedArtisan, jobStatusChanged } from '../utils/emailTemplates.js';
 
 export const validateJob = [
   body('artisanId').isMongoId().withMessage('Valid artisan ID required'),
@@ -47,6 +50,16 @@ export const createJob = asyncHandler(async (req, res) => {
     data: { jobId: job._id },
   });
   emitNotification(req, notification);
+
+  // Email the artisan
+  const artisanUser = await User.findById(artisanProfile.userId).select('email');
+  if (artisanUser?.email) {
+    const { subject, html } = jobCreatedArtisan({
+      job,
+      clientName: clientProfile.fullName,
+    });
+    sendEmailSafe({ to: artisanUser.email, subject, html });
+  }
 
   res.status(201).json({ success: true, data: { job }, message: 'Job created.' });
 });
@@ -128,14 +141,22 @@ export const updateJobStatus = asyncHandler(async (req, res) => {
 
   // Notify the other party
   const notifyUser = isArtisan ? job.clientId : job.artisanId;
+  const actorName = isArtisan ? job.artisanId.fullName : job.clientId.fullName;
   const statusNotification = await Notification.create({
     userId: notifyUser.userId,
     title: 'Job Status Updated',
-    body: `Job "${job.title}" has been updated to "${status}" by ${isArtisan ? job.artisanId.fullName : job.clientId.fullName}.`,
+    body: `Job "${job.title}" has been updated to "${status}" by ${actorName}.`,
     type: 'job',
     data: { jobId: job._id, status },
   });
   emitNotification(req, statusNotification);
+
+  // Email the notified party
+  const notifyUserDoc = await User.findById(notifyUser.userId).select('email');
+  if (notifyUserDoc?.email) {
+    const { subject, html } = jobStatusChanged({ job, status, actorName });
+    sendEmailSafe({ to: notifyUserDoc.email, subject, html });
+  }
 
   res.status(200).json({ success: true, data: { job }, message: `Job ${status}.` });
 });

@@ -3,8 +3,11 @@ import asyncHandler from '../utils/asyncHandler.js';
 import AppError from '../utils/AppError.js';
 import Appointment from '../models/Appointment.js';
 import Profile from '../models/Profile.js';
+import User from '../models/User.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import validate from '../middleware/validate.js';
+import { sendEmailSafe } from '../utils/sendEmail.js';
+import { appointmentBooked } from '../utils/emailTemplates.js';
 
 export const validateAppointment = [
   body('artisanId').isMongoId().withMessage('Valid artisan ID required'),
@@ -31,6 +34,36 @@ export const createAppointment = asyncHandler(async (req, res) => {
     location,
     jobId,
   });
+
+  // Email both parties
+  const artisanProfile = await Profile.findById(artisanId).select('userId fullName');
+  if (artisanProfile) {
+    const [clientUser, artisanUser] = await Promise.all([
+      User.findById(req.user.id).select('email'),
+      User.findById(artisanProfile.userId).select('email'),
+    ]);
+
+    if (clientUser?.email) {
+      const { subject, html } = appointmentBooked({
+        appointment,
+        recipientRole: 'client',
+        clientName: profile.fullName,
+        artisanName: artisanProfile.fullName,
+      });
+      sendEmailSafe({ to: clientUser.email, subject, html });
+    }
+
+    if (artisanUser?.email) {
+      const { subject, html } = appointmentBooked({
+        appointment,
+        recipientRole: 'artisan',
+        clientName: profile.fullName,
+        artisanName: artisanProfile.fullName,
+      });
+      sendEmailSafe({ to: artisanUser.email, subject, html });
+    }
+  }
+
   res.status(201).json({ success: true, data: { appointment }, message: 'Appointment scheduled.' });
 });
 

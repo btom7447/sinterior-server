@@ -35,7 +35,19 @@ const config = Object.freeze({
   NODE_ENV,
   isProd,
   PORT,
+  // CORS allow-list. May be a single URL or a comma-separated list — do NOT
+  // use this value to build links (e.g. email redirects); use CLIENT_APP_URL.
   CLIENT_URL: process.env.CLIENT_URL || 'http://localhost:3000',
+
+  // Canonical public URL of the frontend. Single value, used for email links
+  // and external redirects so they always point at one domain regardless of
+  // how many origins CORS accepts.
+  CLIENT_APP_URL:
+    process.env.CLIENT_APP_URL ||
+    (process.env.NODE_ENV === 'production'
+      ? 'https://www.sintherior.com'
+      : (process.env.CLIENT_URL || 'http://localhost:3000').split(',')[0].trim()),
+
   SERVER_URL: process.env.SERVER_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`,
 
   MONGO_URI: process.env.MONGO_URI,

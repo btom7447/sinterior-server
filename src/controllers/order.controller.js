@@ -1,12 +1,19 @@
 import Order from '../models/Order.js';
 import Product from '../models/Product.js';
 import Profile from '../models/Profile.js';
+import User from '../models/User.js';
 import Notification from '../models/Notification.js';
 import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import { emitNotification } from '../utils/emitNotification.js';
+import { sendEmailSafe } from '../utils/sendEmail.js';
+import {
+  orderPlacedClient,
+  orderPlacedSupplier,
+  orderStatusChanged,
+} from '../utils/emailTemplates.js';
 
 const VALID_STATUS_TRANSITIONS = {
   pending: ['confirmed', 'cancelled'],
@@ -102,6 +109,32 @@ export const create = asyncHandler(async (req, res) => {
       data: { orderId: order._id },
     });
     emitNotification(req, notification);
+  }
+
+  // ── Email notifications ────────────────────────────────────────────────
+  // Buyer receipt
+  const buyerUser = await User.findById(req.user.id).select('email');
+  if (buyerUser?.email) {
+    const { subject, html } = orderPlacedClient({
+      order,
+      buyerName: buyerProfile.fullName,
+    });
+    sendEmailSafe({ to: buyerUser.email, subject, html });
+  }
+
+  // Supplier alerts — one per unique supplier, each scoped to their items
+  for (const supplier of supplierProfiles) {
+    const supplierUser = await User.findById(supplier.userId).select('email');
+    if (!supplierUser?.email) continue;
+    const supplierItems = enrichedItems.filter(
+      (i) => i.supplierId.toString() === supplier._id.toString()
+    );
+    const { subject, html } = orderPlacedSupplier({
+      order,
+      supplierItems,
+      buyerName: buyerProfile.fullName,
+    });
+    sendEmailSafe({ to: supplierUser.email, subject, html });
   }
 
   sendSuccess(res, { order }, 'Order placed successfully.', 201);
@@ -228,6 +261,13 @@ export const updateStatus = asyncHandler(async (req, res) => {
       data: { orderId: order._id, status },
     });
     emitNotification(req, notification);
+
+    // Email the buyer about the status change
+    const buyerUser = await User.findById(notifyUserId).select('email');
+    if (buyerUser?.email) {
+      const { subject, html } = orderStatusChanged({ order, status });
+      sendEmailSafe({ to: buyerUser.email, subject, html });
+    }
   }
 
   sendSuccess(res, { order }, `Order status updated to "${status}".`);

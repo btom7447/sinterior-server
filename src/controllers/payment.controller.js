@@ -9,6 +9,8 @@ import Profile from '../models/Profile.js';
 import User from '../models/User.js';
 import Notification from '../models/Notification.js';
 import { emitNotification } from '../utils/emitNotification.js';
+import { sendEmailSafe } from '../utils/sendEmail.js';
+import { paymentReceiptOrder, paymentReceiptJob } from '../utils/emailTemplates.js';
 import config from '../config/env.js';
 
 /**
@@ -54,7 +56,7 @@ export const initialize = asyncHandler(async (req, res) => {
     throw new AppError('type must be "order" or "job".', 400);
   }
 
-  const callbackUrl = `${config.CLIENT_URL}/payment/verify?reference=${reference}`;
+  const callbackUrl = `${config.CLIENT_APP_URL}/payment/verify?reference=${reference}`;
 
   const paystack = await initializeTransaction({
     email: user.email,
@@ -91,7 +93,7 @@ export const verify = asyncHandler(async (req, res) => {
       entityId,
       { paymentStatus: 'paid', paymentMethod: 'Card Payment' },
       { new: true }
-    );
+    ).populate('buyerId', 'userId fullName');
     if (order) {
       // Notify supplier(s)
       const supplierIds = [...new Set(order.items.map((i) => i.supplierId.toString()))];
@@ -108,10 +110,20 @@ export const verify = asyncHandler(async (req, res) => {
           emitNotification(req, n);
         }
       }
+
+      // Email receipt to the buyer
+      if (order.buyerId?.userId) {
+        const buyerUser = await User.findById(order.buyerId.userId).select('email');
+        if (buyerUser?.email) {
+          const { subject, html } = paymentReceiptOrder({ order });
+          sendEmailSafe({ to: buyerUser.email, subject, html });
+        }
+      }
     }
   } else if (type === 'job') {
     const job = await Job.findById(entityId)
-      .populate('artisanId', 'userId fullName');
+      .populate('artisanId', 'userId fullName')
+      .populate('clientId', 'userId fullName');
     if (job) {
       job.paymentStatus = 'paid';
       await job.save();
@@ -125,6 +137,15 @@ export const verify = asyncHandler(async (req, res) => {
           data: { jobId: job._id },
         });
         emitNotification(req, n);
+      }
+
+      // Email receipt to the client who paid
+      if (job.clientId?.userId) {
+        const clientUser = await User.findById(job.clientId.userId).select('email');
+        if (clientUser?.email) {
+          const { subject, html } = paymentReceiptJob({ job });
+          sendEmailSafe({ to: clientUser.email, subject, html });
+        }
       }
     }
   }
