@@ -373,6 +373,8 @@ export const verifyEmail = asyncHandler(async (req, res) => {
   user.emailVerificationExpires = undefined;
   await user.save({ validateBeforeSave: false });
 
-  // Redirect to frontend with success flag
-  res.redirect(`${config.CLIENT_APP_URL}/verify-email?verified=true`);
+  // The frontend calls this endpoint from /verify-email?token=... and expects
+  // a JSON response, so return one rather than redirecting (a redirect would
+  // be followed by fetch and then fail to parse the resulting HTML as JSON).
+  sendSuccess(res, null, 'Email verified successfully.');
 });
