@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { resolveImageUrls } from '../utils/resolveUrl.js';
 
 const messageSchema = new mongoose.Schema(
   {
@@ -36,6 +37,18 @@ const messageSchema = new mongoose.Schema(
   {
     timestamps: true,
     versionKey: false,
+    toJSON: {
+      transform(_doc, ret) {
+        if (ret.media?.length) ret.media = resolveImageUrls(ret.media);
+        return ret;
+      },
+    },
+    toObject: {
+      transform(_doc, ret) {
+        if (ret.media?.length) ret.media = resolveImageUrls(ret.media);
+        return ret;
+      },
+    },
   }
 );
 

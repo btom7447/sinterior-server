@@ -5,7 +5,7 @@ import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
-import { resolveUploadUrl } from '../utils/resolveUrl.js';
+import { resolveUploadUrl, resolveImageUrls } from '../utils/resolveUrl.js';
 import config from '../config/env.js';
 
 /**
@@ -202,6 +202,48 @@ export const sendMessage = asyncHandler(async (req, res) => {
     { path: 'senderId', select: 'fullName avatarUrl' },
     { path: 'receiverId', select: 'fullName avatarUrl' },
   ]);
+
+  // Emit real-time socket events so the receiver sees the message immediately
+  const io = req.app.get('io');
+  if (io) {
+    const resolvedMedia = media.length > 0 ? resolveImageUrls(media) : [];
+
+    const messageData = {
+      _id: message._id,
+      conversationId,
+      senderId: {
+        _id: senderProfile._id,
+        fullName: senderProfile.fullName,
+        avatarUrl: resolveUploadUrl(senderProfile.avatarUrl),
+      },
+      receiverId: {
+        _id: receiverProfile._id,
+        fullName: receiverProfile.fullName,
+        avatarUrl: resolveUploadUrl(receiverProfile.avatarUrl),
+      },
+      content: message.content,
+      media: resolvedMedia.length > 0 ? resolvedMedia : undefined,
+      isRead: false,
+      createdAt: message.createdAt,
+    };
+
+    io.to(`profile:${receiverProfile._id}`).emit('message:new', messageData);
+    io.to(`profile:${senderProfile._id}`).emit('message:new', messageData);
+
+    io.to(`profile:${receiverProfile._id}`).emit('conversation:updated', {
+      conversationId,
+      lastMessage: {
+        content: message.content || (resolvedMedia.length > 0 ? 'Sent an image' : ''),
+        createdAt: message.createdAt,
+        senderId: senderProfile._id,
+      },
+      participant: {
+        id: senderProfile._id,
+        fullName: senderProfile.fullName,
+        avatarUrl: resolveUploadUrl(senderProfile.avatarUrl),
+      },
+    });
+  }
 
   sendSuccess(res, { message: populated }, 'Message sent.', 201);
 });

@@ -22,7 +22,7 @@ export const resolveImageUrls = (images) => {
  * Known fields that hold upload paths.
  */
 const URL_FIELDS = new Set(['avatarUrl', 'fileUrl', 'logoUrl']);
-const IMAGE_ARRAY_FIELDS = new Set(['images']);
+const IMAGE_ARRAY_FIELDS = new Set(['images', 'media']);
 
 /**
  * Recursively resolve all upload-path fields in a plain object (from .lean() or aggregation).

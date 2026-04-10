@@ -90,6 +90,9 @@ export default function initSocket(server) {
     // Join a user-specific room for notifications (keyed by userId, not profileId)
     socket.join(`user:${socket.user.id}`);
 
+    // Join a profile-specific room so REST controllers can emit chat events
+    socket.join(`profile:${profileId}`);
+
     // Notify contacts that this user is online
     socket.broadcast.emit('user:online', { profileId });
 
