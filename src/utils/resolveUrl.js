@@ -21,7 +21,7 @@ export const resolveImageUrls = (images) => {
 /**
  * Known fields that hold upload paths.
  */
-const URL_FIELDS = new Set(['avatarUrl', 'fileUrl']);
+const URL_FIELDS = new Set(['avatarUrl', 'fileUrl', 'logoUrl']);
 const IMAGE_ARRAY_FIELDS = new Set(['images']);
 
 /**

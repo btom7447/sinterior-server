@@ -4,6 +4,7 @@ import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
 import config from '../config/env.js';
+import { resolveUploadUrl } from '../utils/resolveUrl.js';
 
 // ── PATCH /api/v1/suppliers/onboarding ──────────────────────────────────────
 export const updateOnboarding = asyncHandler(async (req, res) => {
@@ -53,7 +54,7 @@ export const uploadLogo = asyncHandler(async (req, res) => {
     { new: true, runValidators: true, upsert: true, setDefaultsOnInsert: true }
   );
 
-  sendSuccess(res, { logoUrl, supplier }, 'Logo uploaded successfully.');
+  sendSuccess(res, { logoUrl: resolveUploadUrl(logoUrl), supplier }, 'Logo uploaded successfully.');
 });
 
 // ── GET /api/v1/suppliers/me ────────────────────────────────────────────────

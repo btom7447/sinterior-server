@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { resolveUploadUrl } from '../utils/resolveUrl.js';
 
 const supplierProfileSchema = new mongoose.Schema(
   {
@@ -45,6 +46,18 @@ const supplierProfileSchema = new mongoose.Schema(
   {
     timestamps: true,
     versionKey: false,
+    toJSON: {
+      transform(_doc, ret) {
+        if (ret.logoUrl) ret.logoUrl = resolveUploadUrl(ret.logoUrl);
+        return ret;
+      },
+    },
+    toObject: {
+      transform(_doc, ret) {
+        if (ret.logoUrl) ret.logoUrl = resolveUploadUrl(ret.logoUrl);
+        return ret;
+      },
+    },
   }
 );
 
