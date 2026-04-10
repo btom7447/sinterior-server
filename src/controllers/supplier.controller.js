@@ -3,7 +3,7 @@ import Profile from '../models/Profile.js';
 import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
-import config from '../config/env.js';
+
 import { resolveUploadUrl } from '../utils/resolveUrl.js';
 
 // ── PATCH /api/v1/suppliers/onboarding ──────────────────────────────────────
@@ -46,7 +46,7 @@ export const uploadLogo = asyncHandler(async (req, res) => {
   const profile = await Profile.findOne({ userId: req.user.id });
   if (!profile) throw new AppError('Profile not found.', 404);
 
-  const logoUrl = `/${config.UPLOAD_DIR}/${req.file.filename}`;
+  const logoUrl = req.file.url;
 
   const supplier = await SupplierProfile.findOneAndUpdate(
     { profileId: profile._id },

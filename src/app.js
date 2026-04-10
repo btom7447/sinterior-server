@@ -86,8 +86,8 @@ app.use(compression());
 // ── 7. General rate limiter on all API routes ─────────────────────────────────
 app.use('/api', generalLimiter);
 
-// ── 8. Static file serving for uploads ───────────────────────────────────────
-// Files are served at /uploads/<filename>
+// ── 8. Static file serving (legacy) ──────────────────────────────────────────
+// New uploads go to Cloudinary. This serves old files still on local disk.
 app.use(
   '/uploads',
   express.static(path.resolve(__dirname, '../uploads'), {

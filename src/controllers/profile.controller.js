@@ -4,7 +4,7 @@ import Profile from '../models/Profile.js';
 import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
-import config from '../config/env.js';
+
 import { resolveUploadUrl } from '../utils/resolveUrl.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -90,8 +90,7 @@ export const uploadAvatar = asyncHandler(async (req, res) => {
     throw new AppError('No file uploaded. Please attach an image.', 400);
   }
 
-  // Build the public URL path for the stored file
-  const avatarUrl = `/${config.UPLOAD_DIR}/${req.file.filename}`;
+  const avatarUrl = req.file.url;
 
   const profile = await Profile.findOneAndUpdate(
     { userId: req.user.id },

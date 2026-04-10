@@ -4,7 +4,7 @@ import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
-import config from '../config/env.js';
+
 
 // ── GET /api/v1/artisans ─────────────────────────────────────────────────────
 // General list — no geo required. Supports ?category, ?search, ?limit, ?page
@@ -211,7 +211,7 @@ export const uploadPortfolio = asyncHandler(async (req, res) => {
   if (!artisan) throw new AppError('Artisan profile not found.', 404);
 
   const newItems = req.files.map((file, i) => ({
-    url: `/${config.UPLOAD_DIR}/${file.filename}`,
+    url: file.url,
     caption: req.body.captions?.[i] || '',
   }));
 
@@ -234,7 +234,7 @@ export const uploadCertification = asyncHandler(async (req, res) => {
   const artisan = await ArtisanProfile.findOne({ profileId: profile._id });
   if (!artisan) throw new AppError('Artisan profile not found.', 404);
 
-  const fileUrl = `/${config.UPLOAD_DIR}/${req.file.filename}`;
+  const fileUrl = req.file.url;
 
   sendSuccess(res, { fileUrl }, 'Certification file uploaded.');
 });

@@ -1,37 +1,20 @@
 import multer from 'multer';
-import sharp from 'sharp';
-import path from 'path';
-import fs from 'fs';
-import { v4 as uuid } from 'uuid';
-import { fileURLToPath } from 'url';
+import { v2 as cloudinary } from 'cloudinary';
 import config from '../config/env.js';
 import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// ── Cloudinary configuration ─────────────────────────────────────────────────
 
-// Resolve the uploads directory relative to the project root
-const UPLOAD_DIR = path.resolve(__dirname, '../../', config.UPLOAD_DIR);
-
-// Ensure the uploads directory exists
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-}
-
-// ── Multer storage ────────────────────────────────────────────────────────────
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, UPLOAD_DIR);
-  },
-  filename: (_req, file, cb) => {
-    // Sanitise original name to remove spaces / special chars
-    const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
-    cb(null, `${uuid()}-${safeName}`);
-  },
+cloudinary.config({
+  cloud_name: config.CLOUDINARY_CLOUD_NAME,
+  api_key: config.CLOUDINARY_API_KEY,
+  api_secret: config.CLOUDINARY_API_SECRET,
 });
 
-// ── File type filter ──────────────────────────────────────────────────────────
+// ── Multer — memory storage (parse multipart into buffers) ───────────────────
+
+const storage = multer.memoryStorage();
 
 const fileFilter = (_req, file, cb) => {
   const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
@@ -48,8 +31,6 @@ const fileFilter = (_req, file, cb) => {
   }
 };
 
-// ── Base multer instance ──────────────────────────────────────────────────────
-
 const upload = multer({
   storage,
   fileFilter,
@@ -58,34 +39,56 @@ const upload = multer({
   },
 });
 
-// ── Exported helpers ──────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Upload a single buffer to Cloudinary and return the result.
+ */
+const uploadBuffer = (buffer, mimetype, options = {}) =>
+  new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder: options.folder || 'sinterior',
+        resource_type: 'image',
+        format: 'webp',
+        transformation: [
+          {
+            width: options.width || undefined,
+            height: options.height || undefined,
+            crop: 'limit',
+            quality: options.quality || 85,
+          },
+        ],
+      },
+      (error, result) => {
+        if (error) reject(new AppError(error.message || 'Upload failed', 500));
+        else resolve(result);
+      }
+    );
+    stream.end(buffer);
+  });
+
+// ── Exported middleware ──────────────────────────────────────────────────────
 
 /**
  * Middleware that accepts a single file from a named form field.
- *
- * @param {string} fieldName - The multipart form field name
- * @returns {import('express').RequestHandler}
  */
 export const uploadSingle = (fieldName) => upload.single(fieldName);
 
 /**
  * Middleware that accepts multiple files from a named form field.
- *
- * @param {string} fieldName - The multipart form field name
- * @param {number} max       - Maximum number of files
- * @returns {import('express').RequestHandler}
  */
 export const uploadMultiple = (fieldName, max = 10) => upload.array(fieldName, max);
 
 /**
- * Sharp image-resizing middleware.
+ * Upload parsed file(s) to Cloudinary with image transforms.
  * Must be placed AFTER uploadSingle / uploadMultiple in the middleware chain.
- * Resizes the uploaded file(s) in-place using sharp.
+ * After this middleware, each file object has a `.url` property with the
+ * Cloudinary secure URL.
  *
- * @param {number} width   - Target width in pixels
- * @param {number} height  - Target height in pixels (pass 0 to preserve aspect ratio)
- * @param {number} quality - WebP/JPEG output quality 1-100 (default 85)
- * @returns {import('express').RequestHandler}
+ * @param {number} width   - Target width in pixels (0 to skip)
+ * @param {number} height  - Target height in pixels (0 to skip)
+ * @param {number} quality - Output quality 1-100 (default 85)
  */
 export const resizeImage = (width, height, quality = 85) =>
   asyncHandler(async (req, _res, next) => {
@@ -95,30 +98,14 @@ export const resizeImage = (width, height, quality = 85) =>
 
     await Promise.all(
       files.map(async (file) => {
-        let pipeline = sharp(file.path).resize(
-          width || undefined,
-          height || undefined,
-          { fit: 'cover', withoutEnlargement: true }
-        );
-
-        // Convert to WebP for smaller size, better quality
-        pipeline = pipeline.webp({ quality });
-
-        const buffer = await pipeline.toBuffer();
-
-        // Rename to .webp so express.static serves the correct Content-Type
-        const webpPath = file.path.replace(/\.[^.]+$/, '.webp');
-        fs.writeFileSync(webpPath, buffer);
-
-        // Remove the original file if the extension changed
-        if (webpPath !== file.path) {
-          fs.unlinkSync(file.path);
-        }
-
-        // Update file metadata so downstream controllers use the correct path
-        file.path = webpPath;
-        file.filename = path.basename(webpPath);
-        file.mimetype = 'image/webp';
+        const result = await uploadBuffer(file.buffer, file.mimetype, {
+          width: width || undefined,
+          height: height || undefined,
+          quality,
+        });
+        // Attach the Cloudinary URL so controllers can read it
+        file.url = result.secure_url;
+        file.publicId = result.public_id;
       })
     );
 

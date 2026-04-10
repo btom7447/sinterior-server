@@ -6,7 +6,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import { resolveUploadUrl, resolveImageUrls } from '../utils/resolveUrl.js';
-import config from '../config/env.js';
+
 
 /**
  * Build a deterministic conversationId from two profile IDs.
@@ -171,7 +171,7 @@ export const sendMessage = asyncHandler(async (req, res) => {
   }
 
   // Get media from uploaded files (if any)
-  const media = req.files?.map((f) => `/${config.UPLOAD_DIR}/${f.filename}`) || [];
+  const media = req.files?.map((f) => f.url) || [];
 
   if ((!content || !content.trim()) && media.length === 0) {
     throw new AppError('Message must have content or media.', 400);
