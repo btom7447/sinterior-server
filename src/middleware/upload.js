@@ -95,8 +95,6 @@ export const resizeImage = (width, height, quality = 85) =>
 
     await Promise.all(
       files.map(async (file) => {
-        const outputPath = file.path; // overwrite in-place
-
         let pipeline = sharp(file.path).resize(
           width || undefined,
           height || undefined,
@@ -107,9 +105,19 @@ export const resizeImage = (width, height, quality = 85) =>
         pipeline = pipeline.webp({ quality });
 
         const buffer = await pipeline.toBuffer();
-        fs.writeFileSync(outputPath, buffer);
 
-        // Update mimetype so downstream code reflects the real type
+        // Rename to .webp so express.static serves the correct Content-Type
+        const webpPath = file.path.replace(/\.[^.]+$/, '.webp');
+        fs.writeFileSync(webpPath, buffer);
+
+        // Remove the original file if the extension changed
+        if (webpPath !== file.path) {
+          fs.unlinkSync(file.path);
+        }
+
+        // Update file metadata so downstream controllers use the correct path
+        file.path = webpPath;
+        file.filename = path.basename(webpPath);
         file.mimetype = 'image/webp';
       })
     );
