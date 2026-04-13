@@ -30,7 +30,7 @@ export const create = asyncHandler(async (req, res) => {
     throw new AppError('Buyer profile not found.', 404);
   }
 
-  const { items, deliveryAddress, city, note, paymentMethod } = req.body;
+  const { items, deliveryAddress, deliveryState, city, contactName, contactPhone, note, paymentMethod, shippingCost: clientShippingCost } = req.body;
 
   if (!Array.isArray(items) || items.length === 0) {
     throw new AppError('Order must contain at least one item.', 400);
@@ -84,13 +84,38 @@ export const create = asyncHandler(async (req, res) => {
       result.inStock = false;
       await result.save();
     }
+
+    // Low stock notification (sent once per threshold crossing)
+    const threshold = result.lowStockThreshold ?? 20;
+    if (result.quantity > 0 && result.quantity <= threshold && !result.lowStockNotified) {
+      result.lowStockNotified = true;
+      await result.save();
+
+      // Notify the supplier
+      const supplierProfile = await Profile.findById(result.supplierId).select('userId fullName');
+      if (supplierProfile) {
+        const notification = await Notification.create({
+          userId: supplierProfile.userId,
+          title: 'Low Stock Alert',
+          body: `"${result.name}" is running low — only ${result.quantity} left in stock.`,
+          type: 'inventory',
+          data: { productId: result._id },
+        });
+        emitNotification(req, notification);
+      }
+    }
   }
+
+  const shipping = Math.max(0, parseFloat(clientShippingCost) || 0);
+  const grandTotal = totalAmount + shipping;
 
   const order = await Order.create({
     buyerId: buyerProfile._id,
     items: enrichedItems,
-    totalAmount,
+    totalAmount: grandTotal,
+    shippingCost: shipping,
     deliveryAddress,
+    deliveryState,
     city,
     note,
     paymentMethod,
@@ -104,7 +129,7 @@ export const create = asyncHandler(async (req, res) => {
     const notification = await Notification.create({
       userId: supplier.userId,
       title: 'New Order Received',
-      body: `${buyerProfile.fullName} placed an order (₦${totalAmount.toLocaleString('en-NG')}). Check your orders to confirm.`,
+      body: `${buyerProfile.fullName} placed an order (₦${grandTotal.toLocaleString('en-NG')}). Check your orders to confirm.`,
       type: 'order',
       data: { orderId: order._id },
     });

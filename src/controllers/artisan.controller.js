@@ -63,8 +63,12 @@ export const getNearby = asyncHandler(async (req, res) => {
     throw new AppError('lat, lng, and radiusKm must be valid numbers.', 400);
   }
 
-  // Build match stage for optional category filter
-  const matchStage = { isAvailable: true };
+  // Build match stage for optional category filter.
+  // Exclude artisans with missing or [0, 0] coordinates (legacy default).
+  const matchStage = {
+    isAvailable: true,
+    'location.coordinates': { $exists: true, $ne: [0, 0] },
+  };
   if (category) {
     matchStage.skillCategory = { $regex: category, $options: 'i' };
   }

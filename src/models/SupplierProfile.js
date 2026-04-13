@@ -32,6 +32,21 @@ const supplierProfileSchema = new mongoose.Schema(
     deliveryDays: { type: String, trim: true },
     coverageStates: { type: String, trim: true },
 
+    // Shipping — per-state pricing
+    shippingRates: {
+      type: Map,
+      of: Number,
+      default: {},
+    },
+    // Courier services
+    courierServices: [
+      {
+        name: { type: String, trim: true, maxlength: 100 },
+        phone: { type: String, trim: true, maxlength: 20 },
+        website: { type: String, trim: true, maxlength: 200 },
+      },
+    ],
+
     // Payout
     businessAddress: { type: String, trim: true, maxlength: 300 },
     whatsappNumber: { type: String, trim: true, maxlength: 20 },

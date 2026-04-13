@@ -33,6 +33,11 @@ const productSchema = new mongoose.Schema(
         message: '{VALUE} is not a valid category',
       },
     },
+    subcategory: {
+      type: String,
+      trim: true,
+      maxlength: [100, 'Subcategory cannot exceed 100 characters'],
+    },
     price: {
       type: Number,
       required: [true, 'Price is required'],
@@ -57,10 +62,11 @@ const productSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
-    // Flexible key-value specs (e.g. colour: red, weight: 5kg)
+    // Flexible specs — each key maps to an array of values
+    // e.g. { "Color": ["Red", "Blue"], "Material": ["Wood"], "Weight": ["5kg"] }
     specs: {
       type: Map,
-      of: String,
+      of: [String],
       default: {},
     },
     rating: {
@@ -73,6 +79,15 @@ const productSchema = new mongoose.Schema(
       type: Number,
       default: 0,
       min: 0,
+    },
+    lowStockThreshold: {
+      type: Number,
+      min: [0, 'Low stock threshold cannot be negative'],
+      default: 20,
+    },
+    lowStockNotified: {
+      type: Boolean,
+      default: false,
     },
     isActive: {
       type: Boolean,

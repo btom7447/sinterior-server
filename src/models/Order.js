@@ -60,6 +60,16 @@ const orderSchema = new mongoose.Schema(
       trim: true,
       maxlength: [80, 'City cannot exceed 80 characters'],
     },
+    deliveryState: {
+      type: String,
+      trim: true,
+      maxlength: [50, 'Delivery state cannot exceed 50 characters'],
+    },
+    shippingCost: {
+      type: Number,
+      default: 0,
+      min: [0, 'Shipping cost cannot be negative'],
+    },
     note: {
       type: String,
       trim: true,

@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { body } from 'express-validator';
-import { updateOnboarding, getMe, uploadLogo } from '../controllers/supplier.controller.js';
+import { body, param } from 'express-validator';
+import { updateOnboarding, getMe, getByProfileId, uploadLogo, updateShipping, getShippingRates } from '../controllers/supplier.controller.js';
 import { protect, restrictTo } from '../middleware/auth.js';
 import { uploadSingle, resizeImage } from '../middleware/upload.js';
 import validate from '../middleware/validate.js';
@@ -9,6 +9,35 @@ const router = Router();
 
 // ── GET /api/v1/suppliers/me ────────────────────────────────────────────────
 router.get('/me', protect, restrictTo('supplier'), getMe);
+
+// ── PATCH /api/v1/suppliers/shipping ────────────────────────────────────────
+router.patch(
+  '/shipping',
+  protect,
+  restrictTo('supplier'),
+  [
+    body('shippingRates').optional().isObject(),
+    body('courierServices').optional().isArray(),
+  ],
+  validate,
+  updateShipping
+);
+
+// ── GET /api/v1/suppliers/:profileId — public ──────────────────────────────
+router.get(
+  '/:profileId',
+  [param('profileId').isMongoId().withMessage('Invalid supplier ID')],
+  validate,
+  getByProfileId
+);
+
+// ── GET /api/v1/suppliers/:profileId/shipping — public ─────────────────────
+router.get(
+  '/:profileId/shipping',
+  [param('profileId').isMongoId().withMessage('Invalid supplier ID')],
+  validate,
+  getShippingRates
+);
 
 // ── POST /api/v1/suppliers/logo ──────────────────────────────────────────────
 router.post(

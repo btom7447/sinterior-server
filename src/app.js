@@ -9,6 +9,7 @@ import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
 
+import mongoose from 'mongoose';
 import config from './config/env.js';
 import { generalLimiter } from './middleware/rateLimiter.js';
 import errorHandler from './middleware/errorHandler.js';
@@ -98,11 +99,24 @@ app.use(
 
 // ── 9. Health check ───────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
-  res.status(200).json({
-    status: 'ok',
+  const dbState = mongoose.connection.readyState; // 0=disconnected 1=connected 2=connecting 3=disconnecting
+  res.status(dbState === 1 ? 200 : 503).json({
+    status: dbState === 1 ? 'ok' : 'degraded',
+    database: ['disconnected', 'connected', 'connecting', 'disconnecting'][dbState] || 'unknown',
     environment: config.NODE_ENV,
     timestamp: new Date().toISOString(),
   });
+});
+
+// ── 9b. Fail-fast when DB is disconnected ─────────────────────────────────
+// Without this, requests hang for serverSelectionTimeoutMS (15s) then 500.
+app.use('/api', (req, _res, next) => {
+  if (mongoose.connection.readyState !== 1) {
+    return next(
+      new AppError('Service temporarily unavailable — database is reconnecting. Please retry shortly.', 503)
+    );
+  }
+  next();
 });
 
 // ── 10. API routes ────────────────────────────────────────────────────────────

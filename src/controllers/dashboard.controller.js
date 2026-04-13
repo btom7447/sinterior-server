@@ -60,9 +60,9 @@ export const getStats = asyncHandler(async (req, res) => {
 
   if (role === 'supplier') {
     const oid = new mongoose.Types.ObjectId(profileId);
-    const [totalProducts, activeProducts, orderStats, pendingOrders] = await Promise.all([
+    const [totalProducts, outOfStockProducts, orderStats, pendingOrders] = await Promise.all([
       Product.countDocuments({ supplierId: profileId }),
-      Product.countDocuments({ supplierId: profileId, isActive: true, inStock: true }),
+      Product.countDocuments({ supplierId: profileId, isActive: true, inStock: false }),
       Order.aggregate([
         { $match: { 'items.supplierId': oid, status: { $in: ['confirmed', 'shipped', 'delivered'] } } },
         {
@@ -76,7 +76,7 @@ export const getStats = asyncHandler(async (req, res) => {
       Order.countDocuments({ 'items.supplierId': oid, status: 'pending' }),
     ]);
     stats.totalProducts = totalProducts;
-    stats.activeProducts = activeProducts;
+    stats.outOfStockProducts = outOfStockProducts;
     stats.totalOrders = orderStats[0]?.totalOrders || 0;
     stats.totalRevenue = orderStats[0]?.totalRevenue || 0;
     stats.pendingOrders = pendingOrders;

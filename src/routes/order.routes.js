@@ -29,6 +29,10 @@ router.post(
       .isLength({ max: 300 })
       .withMessage('Delivery address cannot exceed 300 characters'),
     body('city').optional().isString().trim().isLength({ max: 80 }),
+    body('deliveryState').optional().isString().trim().isLength({ max: 50 }),
+    body('contactName').optional().isString().trim().isLength({ max: 100 }),
+    body('contactPhone').optional().isString().trim().isLength({ max: 20 }),
+    body('shippingCost').optional().isFloat({ min: 0 }),
     body('note').optional().isString().trim().isLength({ max: 500 }),
     body('paymentMethod').optional().isString().trim().isLength({ max: 50 }),
   ],

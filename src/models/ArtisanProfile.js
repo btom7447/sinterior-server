@@ -38,16 +38,17 @@ const artisanProfileSchema = new mongoose.Schema(
       trim: true,
       maxlength: [80, 'Skill category cannot exceed 80 characters'],
     },
-    // GeoJSON Point for geospatial queries
+    // GeoJSON Point for geospatial queries.
+    // Omitted until the artisan captures real coordinates — [0, 0] would
+    // place them at "Null Island" in the Gulf of Guinea and pollute nearby
+    // search results for every user on the platform.
     location: {
       type: {
         type: String,
         enum: ['Point'],
-        default: 'Point',
       },
       coordinates: {
         type: [Number], // [longitude, latitude]
-        default: [0, 0],
       },
     },
     serviceRadiusKm: {
