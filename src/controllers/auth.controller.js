@@ -59,6 +59,11 @@ const buildUserPayload = (user, profile) => ({
 export const register = asyncHandler(async (req, res) => {
   const { email, password, role = 'client', fullName, city, state, phone } = req.body;
 
+  // Prevent admin registration through the public API
+  if (role === 'admin') {
+    throw new AppError('Admin accounts cannot be created via registration.', 403);
+  }
+
   // Check for duplicate email before starting transaction
   const existing = await User.findOne({ email: email.toLowerCase().trim() });
   if (existing) {

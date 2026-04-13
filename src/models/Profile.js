@@ -41,7 +41,7 @@ const profileSchema = new mongoose.Schema(
     // Mirrors the role on User so profiles can be queried without a join
     role: {
       type: String,
-      enum: ['client', 'artisan', 'supplier'],
+      enum: ['client', 'artisan', 'supplier', 'admin'],
       default: 'client',
     },
     settings: {

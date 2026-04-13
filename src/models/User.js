@@ -22,8 +22,8 @@ const userSchema = new mongoose.Schema(
     role: {
       type: String,
       enum: {
-        values: ['client', 'artisan', 'supplier'],
-        message: "Role must be one of: 'client', 'artisan', 'supplier'",
+        values: ['client', 'artisan', 'supplier', 'admin'],
+        message: "Role must be one of: 'client', 'artisan', 'supplier', 'admin'",
       },
       default: 'client',
     },
@@ -55,6 +55,10 @@ const userSchema = new mongoose.Schema(
     },
     lastLogin: {
       type: Date,
+    },
+    isBanned: {
+      type: Boolean,
+      default: false,
     },
   },
   {

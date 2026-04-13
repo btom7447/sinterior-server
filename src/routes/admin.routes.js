@@ -1,0 +1,77 @@
+import { Router } from 'express';
+import { protect, restrictTo } from '../middleware/auth.js';
+import {
+  getStats,
+  getAnalytics,
+  getUsers,
+  getUser,
+  updateUser,
+  getOrders,
+  getProducts,
+  updateProduct,
+  getBlogPosts,
+  getBlogPost,
+  createBlogPost,
+  updateBlogPost,
+  deleteBlogPost,
+  getCareers,
+  getCareer,
+  createCareer,
+  updateCareer,
+  deleteCareer,
+  getDisputes,
+  updateDispute,
+  getVerifications,
+  updateVerification,
+  getSettings,
+  updateSettings,
+} from '../controllers/admin.controller.js';
+
+const router = Router();
+
+// All admin routes require authentication + admin role
+router.use(protect, restrictTo('admin'));
+
+// Stats & Analytics
+router.get('/stats', getStats);
+router.get('/analytics', getAnalytics);
+
+// Users
+router.get('/users', getUsers);
+router.get('/users/:id', getUser);
+router.patch('/users/:id', updateUser);
+
+// Orders
+router.get('/orders', getOrders);
+
+// Products
+router.get('/products', getProducts);
+router.patch('/products/:id', updateProduct);
+
+// Blog
+router.get('/blog', getBlogPosts);
+router.get('/blog/:id', getBlogPost);
+router.post('/blog', createBlogPost);
+router.patch('/blog/:id', updateBlogPost);
+router.delete('/blog/:id', deleteBlogPost);
+
+// Careers
+router.get('/careers', getCareers);
+router.get('/careers/:id', getCareer);
+router.post('/careers', createCareer);
+router.patch('/careers/:id', updateCareer);
+router.delete('/careers/:id', deleteCareer);
+
+// Disputes
+router.get('/disputes', getDisputes);
+router.patch('/disputes/:id', updateDispute);
+
+// Verification
+router.get('/verifications', getVerifications);
+router.patch('/verifications/:id', updateVerification);
+
+// Platform Settings
+router.get('/settings', getSettings);
+router.patch('/settings', updateSettings);
+
+export default router;

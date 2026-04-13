@@ -33,6 +33,11 @@ import contactRoutes from './routes/contact.routes.js';
 import appointmentRoutes from './routes/appointment.routes.js';
 import projectRoutes from './routes/project.routes.js';
 import paymentRoutes from './routes/payment.routes.js';
+import adminRoutes from './routes/admin.routes.js';
+import blogRoutes from './routes/blog.routes.js';
+import careersRoutes from './routes/careers.routes.js';
+import verificationRoutes from './routes/verification.routes.js';
+import disputeRoutes from './routes/dispute.routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -137,6 +142,11 @@ app.use('/api/v1/suppliers', supplierRoutes);
 app.use('/api/v1/contact', contactRoutes);
 app.use('/api/v1/projects', projectRoutes);
 app.use('/api/v1/payments', paymentRoutes);
+app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/blog', blogRoutes);
+app.use('/api/v1/careers', careersRoutes);
+app.use('/api/v1/verification', verificationRoutes);
+app.use('/api/v1/disputes', disputeRoutes);
 
 // ── 11. 404 — catch-all for unmatched routes ──────────────────────────────────
 app.use((req, _res, next) => {
