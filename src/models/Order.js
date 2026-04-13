@@ -27,6 +27,10 @@ const orderItemSchema = new mongoose.Schema(
       required: [true, 'Price at time of order is required'],
       min: [0, 'Price cannot be negative'],
     },
+    selectedSpecs: {
+      type: Map,
+      of: String,
+    },
   },
   { _id: false }
 );

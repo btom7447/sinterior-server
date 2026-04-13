@@ -60,12 +60,19 @@ export const create = asyncHandler(async (req, res) => {
     const priceAtOrder = product.price;
     totalAmount += priceAtOrder * quantity;
 
+    // Carry buyer's spec selections (e.g. { Color: "Red", Size: "Large" })
+    const selectedSpecs =
+      item.selectedSpecs && typeof item.selectedSpecs === 'object' && Object.keys(item.selectedSpecs).length > 0
+        ? item.selectedSpecs
+        : undefined;
+
     return {
       productId: product._id,
       supplierId: product.supplierId,
       name: product.name,
       quantity,
       priceAtOrder,
+      ...(selectedSpecs ? { selectedSpecs } : {}),
     };
   });
 
