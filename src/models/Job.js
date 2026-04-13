@@ -32,6 +32,19 @@ const jobSchema = new mongoose.Schema(
       trim: true,
       maxlength: 200,
     },
+    state: {
+      type: String,
+      trim: true,
+      maxlength: 50,
+    },
+    city: {
+      type: String,
+      trim: true,
+      maxlength: 80,
+    },
+    appointmentDate: {
+      type: Date,
+    },
     status: {
       type: String,
       enum: ['pending', 'accepted', 'in_progress', 'completed', 'cancelled'],

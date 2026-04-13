@@ -2,6 +2,7 @@ import { body } from 'express-validator';
 import asyncHandler from '../utils/asyncHandler.js';
 import AppError from '../utils/AppError.js';
 import Job from '../models/Job.js';
+import Appointment from '../models/Appointment.js';
 import Profile from '../models/Profile.js';
 import User from '../models/User.js';
 import Notification from '../models/Notification.js';
@@ -9,7 +10,7 @@ import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import validate from '../middleware/validate.js';
 import { emitNotification } from '../utils/emitNotification.js';
 import { sendEmailSafe } from '../utils/sendEmail.js';
-import { jobCreatedArtisan, jobStatusChanged } from '../utils/emailTemplates.js';
+import { jobCreatedArtisan, jobStatusChanged, appointmentBooked } from '../utils/emailTemplates.js';
 
 export const validateJob = [
   body('artisanId').isMongoId().withMessage('Valid artisan ID required'),
@@ -17,6 +18,9 @@ export const validateJob = [
   body('description').optional().trim().isLength({ max: 2000 }),
   body('budget').optional().isFloat({ min: 0 }),
   body('location').optional().trim().isLength({ max: 200 }),
+  body('state').optional().trim().isLength({ max: 50 }),
+  body('city').optional().trim().isLength({ max: 80 }),
+  body('appointmentDate').optional().isISO8601().withMessage('Valid appointment date required'),
   validate,
 ];
 
@@ -24,7 +28,7 @@ export const createJob = asyncHandler(async (req, res) => {
   const clientProfile = await Profile.findOne({ userId: req.user.id });
   if (!clientProfile) throw new AppError('Profile not found.', 404);
 
-  const { artisanId, title, description, budget, location, startDate, endDate } = req.body;
+  const { artisanId, title, description, budget, location, state, city, appointmentDate, startDate, endDate } = req.body;
 
   // Verify artisan exists
   const artisanProfile = await Profile.findById(artisanId).select('userId fullName');
@@ -37,6 +41,9 @@ export const createJob = asyncHandler(async (req, res) => {
     description,
     budget,
     location,
+    state,
+    city,
+    appointmentDate,
     startDate,
     endDate,
   });
@@ -138,6 +145,44 @@ export const updateJobStatus = asyncHandler(async (req, res) => {
 
   job.status = status;
   await job.save();
+
+  // Auto-create appointment when artisan accepts and an appointmentDate is set
+  if (status === 'accepted' && job.appointmentDate) {
+    const locationStr = [job.city, job.state].filter(Boolean).join(', ') || job.location || '';
+    const appointment = await Appointment.create({
+      clientId: job.clientId._id,
+      artisanId: job.artisanId._id,
+      jobId: job._id,
+      title: job.title,
+      description: job.description,
+      date: job.appointmentDate,
+      location: locationStr,
+    });
+
+    // Email both parties about the appointment
+    const [clientUser, artisanUser] = await Promise.all([
+      User.findById(job.clientId.userId).select('email'),
+      User.findById(job.artisanId.userId).select('email'),
+    ]);
+    if (clientUser?.email) {
+      const { subject, html } = appointmentBooked({
+        appointment,
+        recipientRole: 'client',
+        clientName: job.clientId.fullName,
+        artisanName: job.artisanId.fullName,
+      });
+      sendEmailSafe({ to: clientUser.email, subject, html });
+    }
+    if (artisanUser?.email) {
+      const { subject, html } = appointmentBooked({
+        appointment,
+        recipientRole: 'artisan',
+        clientName: job.clientId.fullName,
+        artisanName: job.artisanId.fullName,
+      });
+      sendEmailSafe({ to: artisanUser.email, subject, html });
+    }
+  }
 
   // Notify the other party
   const notifyUser = isArtisan ? job.clientId : job.artisanId;

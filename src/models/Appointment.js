@@ -46,6 +46,15 @@ const appointmentSchema = new mongoose.Schema(
       enum: ['scheduled', 'completed', 'cancelled', 'no_show'],
       default: 'scheduled',
     },
+    rescheduleReason: {
+      type: String,
+      trim: true,
+      maxlength: 500,
+    },
+    rescheduledBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Profile',
+    },
   },
   { timestamps: true }
 );
