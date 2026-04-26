@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { body, param } from 'express-validator';
-import { create, list, getById, updateStatus } from '../controllers/order.controller.js';
+import { create, list, getById, updateStatus, approveDelivery } from '../controllers/order.controller.js';
 import { protect, restrictTo } from '../middleware/auth.js';
 import validate from '../middleware/validate.js';
 
@@ -64,6 +64,19 @@ router.patch(
   ],
   validate,
   updateStatus
+);
+
+// ── POST /api/v1/orders/:id/approve-delivery ────────────────────────────────
+// Either party flips their delivery-approval flag. When both have approved
+// AND payment is settled, the order transitions to `delivered`.
+router.post(
+  '/:id/approve-delivery',
+  [
+    param('id').isMongoId().withMessage('Invalid order ID'),
+    body('cashCollected').optional().isBoolean(),
+  ],
+  validate,
+  approveDelivery
 );
 
 export default router;

@@ -7,14 +7,17 @@ import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 
 
 // ── GET /api/v1/artisans ─────────────────────────────────────────────────────
-// General list — no geo required. Supports ?category, ?search, ?limit, ?page
+// General list — no geo required. Supports ?category, ?skill, ?search, ?limit, ?page
 export const list = asyncHandler(async (req, res) => {
-  const { category, search } = req.query;
+  const { category, skill, search } = req.query;
   const { page, limit, skip } = getPagination(req.query);
 
   const filter = { isAvailable: true };
   if (category) {
     filter.skillCategory = { $regex: category, $options: 'i' };
+  }
+  if (skill) {
+    filter.skill = { $regex: skill, $options: 'i' };
   }
 
   const [total, artisans] = await Promise.all([
@@ -52,7 +55,7 @@ const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Returns artisans near the requested coordinates, with a city/state fallback
 // for artisans whose location coordinates aren't populated yet.
 export const getNearby = asyncHandler(async (req, res) => {
-  const { lat, lng, radiusKm = 50, category, city, state } = req.query;
+  const { lat, lng, radiusKm = 50, category, skill, city, state } = req.query;
   const { page, limit, skip } = getPagination(req.query);
 
   if (!lat || !lng) {
@@ -76,6 +79,7 @@ export const getNearby = asyncHandler(async (req, res) => {
     'location.coordinates': { $type: 'array' },
   };
   if (category) geoMatch.skillCategory = { $regex: category, $options: 'i' };
+  if (skill) geoMatch.skill = { $regex: skill, $options: 'i' };
 
   const projectStage = {
     $project: {
@@ -138,6 +142,7 @@ export const getNearby = asyncHandler(async (req, res) => {
   if (city || state) {
     const cityMatch = { isAvailable: true };
     if (category) cityMatch.skillCategory = { $regex: category, $options: 'i' };
+    if (skill) cityMatch.skill = { $regex: skill, $options: 'i' };
     if (city) cityMatch.city = { $regex: `^${escapeRegex(city)}$`, $options: 'i' };
     if (state) cityMatch.state = { $regex: `^${escapeRegex(state)}$`, $options: 'i' };
 

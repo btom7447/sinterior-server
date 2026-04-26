@@ -288,6 +288,15 @@ export const updateStatus = asyncHandler(async (req, res) => {
     );
   }
 
+  // Delivery is now a dual-approval flow on its own endpoint — direct status
+  // updates to 'delivered' aren't allowed any more.
+  if (status === 'delivered') {
+    throw new AppError(
+      'Use POST /orders/:id/approve-delivery instead — delivery requires both parties to confirm.',
+      400
+    );
+  }
+
   // Cancellation requires a reason — this is shown to the other party.
   if (status === 'cancelled') {
     const reason = (req.body?.reason || '').trim();
@@ -334,4 +343,117 @@ export const updateStatus = asyncHandler(async (req, res) => {
   }
 
   sendSuccess(res, { order }, `Order status updated to "${status}".`);
+});
+
+// ── POST /api/v1/orders/:id/approve-delivery ────────────────────────────────
+// Either party flips their delivery-approval flag. The order only transitions
+// to `delivered` when both parties have approved AND payment is settled.
+//
+// Payment guard:
+//   - If paymentStatus is already 'paid' (online payment cleared), no extra
+//     check is needed.
+//   - Otherwise (pay-on-delivery), the supplier must pass `cashCollected: true`
+//     in their approval call. We then mark paymentStatus='paid'.
+//
+// We deliberately do not let buyers mark delivery if payment is unsettled, so
+// suppliers always have visibility into the cash-collection step.
+export const approveDelivery = asyncHandler(async (req, res) => {
+  const profile = await Profile.findOne({ userId: req.user.id });
+  if (!profile) throw new AppError('Profile not found.', 404);
+
+  const order = await Order.findById(req.params.id).populate('buyerId', 'userId fullName');
+  if (!order) throw new AppError('Order not found.', 404);
+
+  const isBuyer = order.buyerId._id.toString() === profile._id.toString();
+  const isSupplier = order.items.some(
+    (item) => item.supplierId.toString() === profile._id.toString()
+  );
+  if (!isBuyer && !isSupplier) {
+    throw new AppError('You are not authorised to update this order.', 403);
+  }
+
+  if (order.status !== 'shipped') {
+    throw new AppError(
+      'Delivery can only be approved on a shipped order.',
+      400
+    );
+  }
+
+  const cashCollected = req.body?.cashCollected === true;
+
+  // Supplier-side approval — also handles pay-on-delivery cash collection.
+  if (isSupplier) {
+    if (order.supplierDeliveryApproved) {
+      return sendSuccess(res, { order }, 'You have already confirmed delivery.');
+    }
+    if (order.paymentStatus !== 'paid' && !cashCollected) {
+      throw new AppError(
+        'Confirm cash was collected from the buyer to mark this delivered.',
+        400
+      );
+    }
+    if (order.paymentStatus !== 'paid' && cashCollected) {
+      order.paymentStatus = 'paid';
+    }
+    order.supplierDeliveryApproved = true;
+  } else {
+    // Buyer-side approval — they confirm receipt.
+    if (order.buyerDeliveryApproved) {
+      return sendSuccess(res, { order }, 'You have already confirmed receipt.');
+    }
+    order.buyerDeliveryApproved = true;
+  }
+
+  // Both sides approved AND payment settled → transition to delivered.
+  let transitioned = false;
+  if (
+    order.buyerDeliveryApproved &&
+    order.supplierDeliveryApproved &&
+    order.paymentStatus === 'paid'
+  ) {
+    order.status = 'delivered';
+    order.deliveredAt = new Date();
+    transitioned = true;
+  }
+
+  await order.save();
+
+  // Notify the other party.
+  const otherUserId = isBuyer ? null : order.buyerId.userId;
+  if (otherUserId) {
+    const title = transitioned
+      ? 'Order delivered'
+      : isSupplier
+      ? 'Awaiting your delivery confirmation'
+      : 'Buyer confirmed receipt';
+    const body = transitioned
+      ? `Both parties confirmed delivery of order #${order._id.toString().slice(-8).toUpperCase()}.`
+      : isSupplier
+      ? `${profile.fullName} confirmed delivery — confirm receipt to finalise.`
+      : `${profile.fullName} confirmed receipt — confirm delivery to finalise.`;
+    const notification = await Notification.create({
+      userId: otherUserId,
+      title,
+      body,
+      type: 'order',
+      data: { orderId: order._id, status: order.status },
+    });
+    emitNotification(req, notification);
+
+    if (transitioned) {
+      const buyerUser = await User.findById(otherUserId).select('email');
+      if (buyerUser?.email) {
+        const tpl = orderStatusChanged({ order, status: 'delivered' });
+        sendEmailSafe({ to: buyerUser.email, subject: tpl.subject, html: tpl.html });
+      }
+    }
+  }
+
+  sendSuccess(
+    res,
+    { order },
+    transitioned
+      ? 'Order delivered.'
+      : `${isSupplier ? 'Delivery' : 'Receipt'} approved — waiting on the other party.`
+  );
 });

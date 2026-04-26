@@ -112,6 +112,14 @@ const orderSchema = new mongoose.Schema(
       type: String,
       enum: ['buyer', 'supplier'],
     },
+
+    // Dual-approval flags for delivery — both parties must confirm before the
+    // order moves to `delivered`. The supplier approval also handles
+    // pay-on-delivery cash collection (it sets paymentStatus to 'paid' when
+    // marked).
+    buyerDeliveryApproved: { type: Boolean, default: false },
+    supplierDeliveryApproved: { type: Boolean, default: false },
+    deliveredAt: { type: Date },
   },
   {
     timestamps: true,
