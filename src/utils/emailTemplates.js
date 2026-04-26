@@ -135,6 +135,53 @@ export const emailVerification = ({ verifyUrl }) => ({
   }),
 });
 
+// ── VERIFICATION ─────────────────────────────────────────────────────────────
+
+export const verificationSubmitted = ({ businessName }) => ({
+  subject: 'We got your verification request',
+  html: wrap({
+    preheader: 'Your Sintherior verification is under review.',
+    title: 'Verification submitted',
+    body: `
+      <p style="margin:0 0 12px 0;">Thanks for submitting verification for <strong>${businessName}</strong>.</p>
+      <p style="margin:0 0 12px 0;">Our team will review your documents and get back to you within 48 hours.</p>
+      <p style="margin:0 0 12px 0;color:${BRAND.muted};font-size:13px;">Until then, your profile shows as <strong>Unverified</strong> to clients.</p>
+    `,
+    cta: { label: 'View status', url: `${config.CLIENT_APP_URL}/dashboard/verification` },
+  }),
+});
+
+export const verificationApproved = ({ businessName }) => ({
+  subject: "You're verified on Sintherior",
+  html: wrap({
+    preheader: 'Your verified badge is now live.',
+    title: 'Verified ✓',
+    body: `
+      <p style="margin:0 0 12px 0;">Great news — <strong>${businessName}</strong> has been verified.</p>
+      <p style="margin:0 0 12px 0;">The verified badge now appears on your profile and clients searching nearby.</p>
+    `,
+    cta: { label: 'View profile', url: `${config.CLIENT_APP_URL}/dashboard/profile` },
+  }),
+});
+
+export const verificationRejected = ({ businessName, reviewNote }) => ({
+  subject: 'Verification could not be approved',
+  html: wrap({
+    preheader: 'Your verification request needs another look.',
+    title: 'Verification update',
+    body: `
+      <p style="margin:0 0 12px 0;">We weren't able to verify <strong>${businessName}</strong> with the documents provided.</p>
+      ${
+        reviewNote
+          ? `<p style="margin:0 0 12px 0;padding:12px 14px;background:${BRAND.bg};border-radius:8px;font-size:14px;line-height:1.6;"><strong>Reviewer note:</strong> ${reviewNote}</p>`
+          : ''
+      }
+      <p style="margin:0 0 12px 0;">You can submit a new request with updated documents anytime.</p>
+    `,
+    cta: { label: 'Submit again', url: `${config.CLIENT_APP_URL}/dashboard/verification` },
+  }),
+});
+
 export const passwordReset = ({ resetUrl }) => ({
   subject: 'Reset your Sintherior password',
   html: wrap({

@@ -100,6 +100,18 @@ const orderSchema = new mongoose.Schema(
       },
       default: 'pending',
     },
+
+    // Reason and actor for cancellation. Required at the controller level when
+    // an order transitions to `cancelled`.
+    cancellationReason: {
+      type: String,
+      trim: true,
+      maxlength: [1000, 'Cancellation reason cannot exceed 1000 characters'],
+    },
+    cancelledBy: {
+      type: String,
+      enum: ['buyer', 'supplier'],
+    },
   },
   {
     timestamps: true,

@@ -182,9 +182,18 @@ export const list = asyncHandler(async (req, res) => {
   const { page, limit, skip } = getPagination(req.query);
   const role = req.user.role;
 
-  // Clients see their own orders; suppliers see orders that contain their products
+  // ?as=buyer|seller — explicitly choose the view. If omitted, default by role
+  // (supplier → seller view, anyone else → buyer view).
+  const explicitAs = req.query.as;
+  const view =
+    explicitAs === 'buyer' || explicitAs === 'seller'
+      ? explicitAs
+      : role === 'supplier'
+      ? 'seller'
+      : 'buyer';
+
   let filter;
-  if (role === 'supplier') {
+  if (view === 'seller') {
     filter = { 'items.supplierId': profile._id };
   } else {
     filter = { buyerId: profile._id };
@@ -279,22 +288,44 @@ export const updateStatus = asyncHandler(async (req, res) => {
     );
   }
 
+  // Cancellation requires a reason — this is shown to the other party.
+  if (status === 'cancelled') {
+    const reason = (req.body?.reason || '').trim();
+    if (!reason) {
+      throw new AppError('A reason is required when cancelling an order.', 400);
+    }
+    order.cancellationReason = reason;
+    order.cancelledBy = isBuyer ? 'buyer' : 'supplier';
+  }
+
   order.status = status;
   await order.save();
 
-  // Notify the other party about the status change
-  const notifyUserId = isBuyer ? null : order.buyerId.userId;
+  // Notify the other party. For supplier-driven transitions (confirmed/shipped/delivered)
+  // we notify the buyer; for cancellations we notify whichever side didn't cancel.
+  const notifyUserId =
+    status === 'cancelled' && !isBuyer
+      ? order.buyerId.userId
+      : status === 'cancelled' && isBuyer
+      ? null // we don't yet have a single supplier user to notify on a multi-supplier order
+      : !isBuyer
+      ? order.buyerId.userId
+      : null;
+
   if (notifyUserId) {
+    const reasonSuffix =
+      status === 'cancelled' && order.cancellationReason
+        ? ` Reason: ${order.cancellationReason}`
+        : '';
     const notification = await Notification.create({
       userId: notifyUserId,
-      title: 'Order Status Updated',
-      body: `Your order has been updated to "${status}".`,
+      title: status === 'cancelled' ? 'Order cancelled' : 'Order status updated',
+      body: `Your order has been ${status === 'cancelled' ? 'cancelled' : `marked as ${status}`}.${reasonSuffix}`,
       type: 'order',
-      data: { orderId: order._id, status },
+      data: { orderId: order._id, status, reason: order.cancellationReason },
     });
     emitNotification(req, notification);
 
-    // Email the buyer about the status change
     const buyerUser = await User.findById(notifyUserId).select('email');
     if (buyerUser?.email) {
       const { subject, html } = orderStatusChanged({ order, status });

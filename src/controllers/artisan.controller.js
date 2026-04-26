@@ -46,9 +46,13 @@ export const list = asyncHandler(async (req, res) => {
   sendPaginated(res, results, pagination, 'Artisans retrieved.');
 });
 
+const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 // ── GET /api/v1/artisans/nearby ───────────────────────────────────────────────
+// Returns artisans near the requested coordinates, with a city/state fallback
+// for artisans whose location coordinates aren't populated yet.
 export const getNearby = asyncHandler(async (req, res) => {
-  const { lat, lng, radiusKm = 50, category } = req.query;
+  const { lat, lng, radiusKm = 50, category, city, state } = req.query;
   const { page, limit, skip } = getPagination(req.query);
 
   if (!lat || !lng) {
@@ -63,27 +67,38 @@ export const getNearby = asyncHandler(async (req, res) => {
     throw new AppError('lat, lng, and radiusKm must be valid numbers.', 400);
   }
 
-  // Build match stage for optional category filter.
-  // Exclude artisans with missing or [0, 0] coordinates (legacy default).
-  const matchStage = {
+  // Defensive: only docs with a valid GeoJSON Point participate in $geoNear.
+  // A single doc with a partial `location` field can otherwise crash the
+  // aggregation with a 500.
+  const geoMatch = {
     isAvailable: true,
-    'location.coordinates': { $exists: true, $ne: [0, 0] },
+    'location.type': 'Point',
+    'location.coordinates': { $type: 'array' },
   };
-  if (category) {
-    matchStage.skillCategory = { $regex: category, $options: 'i' };
-  }
+  if (category) geoMatch.skillCategory = { $regex: category, $options: 'i' };
 
-  // $geoNear must be the first stage in an aggregation pipeline
-  const pipeline = [
-    {
-      $geoNear: {
-        near: { type: 'Point', coordinates: [longitude, latitude] },
-        distanceField: 'distanceMeters',
-        maxDistance: radius * 1000, // km → metres
-        spherical: true,
-        query: matchStage,
-      },
+  const projectStage = {
+    $project: {
+      profileId: 1,
+      skill: 1,
+      skillCategory: 1,
+      city: 1,
+      state: 1,
+      pricePerDay: 1,
+      experienceYears: 1,
+      isAvailable: 1,
+      isVerified: 1,
+      rating: 1,
+      reviewCount: 1,
+      distanceKm: 1,
+      availableDays: 1,
+      'profile.fullName': 1,
+      'profile.avatarUrl': 1,
+      'profile.phone': 1,
     },
+  };
+
+  const lookupAndUnwind = [
     {
       $lookup: {
         from: 'profiles',
@@ -93,45 +108,61 @@ export const getNearby = asyncHandler(async (req, res) => {
       },
     },
     { $unwind: { path: '$profile', preserveNullAndEmpty: false } },
-    {
-      $addFields: {
-        distanceKm: { $divide: ['$distanceMeters', 1000] },
-      },
-    },
-    {
-      $project: {
-        profileId: 1,
-        skill: 1,
-        skillCategory: 1,
-        city: 1,
-        state: 1,
-        pricePerDay: 1,
-        experienceYears: 1,
-        isAvailable: 1,
-        rating: 1,
-        reviewCount: 1,
-        distanceKm: 1,
-        availableDays: 1,
-        'profile.fullName': 1,
-        'profile.avatarUrl': 1,
-        'profile.phone': 1,
-      },
-    },
   ];
 
-  // Count total for pagination (run a separate lightweight aggregation)
-  const countPipeline = pipeline.slice(0, 2); // up to $geoNear stage
-  countPipeline.push({ $count: 'total' });
+  // 1. Geo query — falls through to city match on any aggregation error.
+  let geoResults = [];
+  try {
+    geoResults = await ArtisanProfile.aggregate([
+      {
+        $geoNear: {
+          near: { type: 'Point', coordinates: [longitude, latitude] },
+          distanceField: 'distanceMeters',
+          maxDistance: radius * 1000,
+          spherical: true,
+          query: geoMatch,
+        },
+      },
+      ...lookupAndUnwind,
+      { $addFields: { distanceKm: { $divide: ['$distanceMeters', 1000] } } },
+      projectStage,
+    ]);
+  } catch (err) {
+    console.warn('[getNearby] $geoNear failed, falling back to city match:', err.message);
+    geoResults = [];
+  }
 
-  const [countResult, artisans] = await Promise.all([
-    ArtisanProfile.aggregate(countPipeline),
-    ArtisanProfile.aggregate([...pipeline, { $skip: skip }, { $limit: limit }]),
-  ]);
+  // 2. City/state fallback — surfaces artisans without coordinates when the
+  //    client passes a city/state hint.
+  let cityResults = [];
+  if (city || state) {
+    const cityMatch = { isAvailable: true };
+    if (category) cityMatch.skillCategory = { $regex: category, $options: 'i' };
+    if (city) cityMatch.city = { $regex: `^${escapeRegex(city)}$`, $options: 'i' };
+    if (state) cityMatch.state = { $regex: `^${escapeRegex(state)}$`, $options: 'i' };
 
-  const total = countResult[0]?.total || 0;
+    cityResults = await ArtisanProfile.aggregate([
+      { $match: cityMatch },
+      ...lookupAndUnwind,
+      projectStage,
+    ]);
+  }
+
+  // 3. Merge + dedupe by _id (geo results win since they have distanceKm).
+  const seen = new Set();
+  const merged = [];
+  for (const a of [...geoResults, ...cityResults]) {
+    const id = a._id.toString();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    merged.push(a);
+  }
+
+  const total = merged.length;
+  const paged = merged.slice(skip, skip + limit);
   const pagination = buildPaginationMeta(total, page, limit);
 
-  sendPaginated(res, artisans, pagination, 'Nearby artisans retrieved.');
+  sendPaginated(res, paged, pagination, 'Nearby artisans retrieved.');
 });
 
 // ── GET /api/v1/artisans/:id ──────────────────────────────────────────────────
@@ -147,6 +178,19 @@ export const getById = asyncHandler(async (req, res) => {
   }
 
   sendSuccess(res, { artisan }, 'Artisan retrieved.');
+});
+
+// ── GET /api/v1/artisans/me ──────────────────────────────────────────────────
+// Authenticated artisan fetches their own artisan profile (full document
+// including portfolio, certifications, location, etc.) for the editor.
+export const getMine = asyncHandler(async (req, res) => {
+  const profile = await Profile.findOne({ userId: req.user.id });
+  if (!profile) throw new AppError('Profile not found.', 404);
+
+  const artisan = await ArtisanProfile.findOne({ profileId: profile._id });
+  if (!artisan) throw new AppError('Artisan profile not found.', 404);
+
+  sendSuccess(res, { artisan }, 'Artisan profile retrieved.');
 });
 
 // ── PATCH /api/v1/artisans/onboarding ────────────────────────────────────────

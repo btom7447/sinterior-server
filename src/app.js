@@ -36,6 +36,8 @@ import paymentRoutes from './routes/payment.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import blogRoutes from './routes/blog.routes.js';
 import careersRoutes from './routes/careers.routes.js';
+import helpRoutes from './routes/help.routes.js';
+import feedRoutes from './routes/feed.routes.js';
 import verificationRoutes from './routes/verification.routes.js';
 import disputeRoutes from './routes/dispute.routes.js';
 
@@ -145,6 +147,8 @@ app.use('/api/v1/payments', paymentRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/blog', blogRoutes);
 app.use('/api/v1/careers', careersRoutes);
+app.use('/api/v1/help', helpRoutes);
+app.use('/api/v1/feed', feedRoutes);
 app.use('/api/v1/verification', verificationRoutes);
 app.use('/api/v1/disputes', disputeRoutes);
 

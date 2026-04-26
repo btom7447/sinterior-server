@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { protect, restrictTo } from '../middleware/auth.js';
 import {
   getStats,
+  getPageStats,
   getAnalytics,
   getUsers,
   getUser,
@@ -19,6 +20,16 @@ import {
   createCareer,
   updateCareer,
   deleteCareer,
+  getHelpArticles,
+  getHelpArticle,
+  createHelpArticle,
+  updateHelpArticle,
+  deleteHelpArticle,
+  getFeedPosts,
+  getFeedPost,
+  createFeedPost,
+  updateFeedPost,
+  deleteFeedPost,
   getDisputes,
   updateDispute,
   getVerifications,
@@ -34,6 +45,7 @@ router.use(protect, restrictTo('admin'));
 
 // Stats & Analytics
 router.get('/stats', getStats);
+router.get('/page-stats', getPageStats);
 router.get('/analytics', getAnalytics);
 
 // Users
@@ -61,6 +73,20 @@ router.get('/careers/:id', getCareer);
 router.post('/careers', createCareer);
 router.patch('/careers/:id', updateCareer);
 router.delete('/careers/:id', deleteCareer);
+
+// Help articles
+router.get('/help', getHelpArticles);
+router.get('/help/:id', getHelpArticle);
+router.post('/help', createHelpArticle);
+router.patch('/help/:id', updateHelpArticle);
+router.delete('/help/:id', deleteHelpArticle);
+
+// Feed posts
+router.get('/feed', getFeedPosts);
+router.get('/feed/:id', getFeedPost);
+router.post('/feed', createFeedPost);
+router.patch('/feed/:id', updateFeedPost);
+router.delete('/feed/:id', deleteFeedPost);
 
 // Disputes
 router.get('/disputes', getDisputes);

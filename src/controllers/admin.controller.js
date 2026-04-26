@@ -7,12 +7,18 @@ import Order from '../models/Order.js';
 import Job from '../models/Job.js';
 import BlogPost from '../models/BlogPost.js';
 import CareerListing from '../models/CareerListing.js';
+import HelpArticle from '../models/HelpArticle.js';
+import FeedPost from '../models/FeedPost.js';
 import Dispute from '../models/Dispute.js';
 import VerificationRequest from '../models/VerificationRequest.js';
 import PlatformSetting from '../models/PlatformSetting.js';
 import ArtisanProfile from '../models/ArtisanProfile.js';
 import SupplierProfile from '../models/SupplierProfile.js';
+import Notification from '../models/Notification.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
+import { emitNotification } from '../utils/emitNotification.js';
+import { sendEmailSafe } from '../utils/sendEmail.js';
+import { verificationApproved, verificationRejected } from '../utils/emailTemplates.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // STATS / ANALYTICS
@@ -23,22 +29,35 @@ export const getStats = asyncHandler(async (_req, res) => {
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
   const [
-    totalUsers,
-    totalOrders,
-    totalProducts,
-    totalJobs,
+    activeUsers,
+    activeArtisans,
+    activeSellers,
+    activeOrders,
+    productsInStock,
+    activeJobs,
     pendingVerifications,
     openDisputes,
     newUsersThisMonth,
     revenueAgg,
   ] = await Promise.all([
-    User.countDocuments(),
-    Order.countDocuments(),
-    Product.countDocuments(),
-    Job.countDocuments(),
+    // Active = not banned (the only soft-delete signal we have on User).
+    User.countDocuments({ isBanned: { $ne: true } }),
+    // Profile is the source of truth for role; ArtisanProfile / SupplierProfile may not exist yet for newly signed up users.
+    Profile.countDocuments({ role: 'artisan' }),
+    Profile.countDocuments({ role: 'supplier' }),
+    // Active orders = anything still in motion (not delivered, not cancelled).
+    Order.countDocuments({ status: { $nin: ['delivered', 'cancelled'] } }),
+    // We treat any product with stock > 0 OR no `stock` field set (legacy rows that pre-date stock tracking) as in-stock.
+    Product.countDocuments({
+      $or: [{ stock: { $gt: 0 } }, { stock: { $exists: false } }],
+      isActive: { $ne: false },
+    }),
+    // Active jobs = anything not yet completed or cancelled.
+    Job.countDocuments({ status: { $in: ['pending', 'accepted', 'in_progress'] } }),
     VerificationRequest.countDocuments({ status: 'pending' }),
     Dispute.countDocuments({ status: { $in: ['open', 'under_review'] } }),
     User.countDocuments({ createdAt: { $gte: startOfMonth } }),
+    // Total revenue from non-cancelled orders.
     Order.aggregate([
       { $match: { status: { $ne: 'cancelled' } } },
       { $group: { _id: null, total: { $sum: '$totalAmount' } } },
@@ -51,10 +70,12 @@ export const getStats = asyncHandler(async (_req, res) => {
     success: true,
     data: {
       stats: {
-        totalUsers,
-        totalOrders,
-        totalProducts,
-        totalJobs,
+        activeUsers,
+        activeArtisans,
+        activeSellers,
+        activeOrders,
+        productsInStock,
+        activeJobs,
         totalRevenue,
         pendingVerifications,
         openDisputes,
@@ -62,6 +83,115 @@ export const getStats = asyncHandler(async (_req, res) => {
       },
     },
   });
+});
+
+// GET /api/v1/admin/page-stats?page=users|orders|products|jobs|verification|disputes
+// Returns the metric strip for a specific admin sub-page so each page only
+// fetches the numbers it needs.
+export const getPageStats = asyncHandler(async (req, res) => {
+  const { page } = req.query;
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  let stats = {};
+
+  switch (page) {
+    case 'users': {
+      const [total, banned, newThisMonth, byRole] = await Promise.all([
+        User.countDocuments(),
+        User.countDocuments({ isBanned: true }),
+        User.countDocuments({ createdAt: { $gte: startOfMonth } }),
+        Profile.aggregate([{ $group: { _id: '$role', count: { $sum: 1 } } }]),
+      ]);
+      const roleMap = byRole.reduce((acc, r) => ({ ...acc, [r._id]: r.count }), {});
+      stats = {
+        total,
+        banned,
+        newThisMonth,
+        clients: roleMap.client || 0,
+        artisans: roleMap.artisan || 0,
+        suppliers: roleMap.supplier || 0,
+      };
+      break;
+    }
+    case 'orders': {
+      const [total, pending, shipped, delivered, cancelled, revenueAgg] = await Promise.all([
+        Order.countDocuments(),
+        Order.countDocuments({ status: 'pending' }),
+        Order.countDocuments({ status: 'shipped' }),
+        Order.countDocuments({ status: 'delivered' }),
+        Order.countDocuments({ status: 'cancelled' }),
+        Order.aggregate([
+          { $match: { status: { $ne: 'cancelled' }, createdAt: { $gte: startOfMonth } } },
+          { $group: { _id: null, total: { $sum: '$totalAmount' } } },
+        ]),
+      ]);
+      stats = {
+        total,
+        pending,
+        shipped,
+        delivered,
+        cancelled,
+        revenueThisMonth: revenueAgg[0]?.total || 0,
+      };
+      break;
+    }
+    case 'products': {
+      const [total, inStock, outOfStock, hidden, lowStock] = await Promise.all([
+        Product.countDocuments(),
+        Product.countDocuments({
+          $or: [{ stock: { $gt: 0 } }, { stock: { $exists: false } }],
+          isActive: { $ne: false },
+        }),
+        Product.countDocuments({ stock: { $lte: 0 } }),
+        Product.countDocuments({ isActive: false }),
+        Product.countDocuments({ stock: { $gt: 0, $lte: 5 } }),
+      ]);
+      stats = { total, inStock, outOfStock, hidden, lowStock };
+      break;
+    }
+    case 'jobs': {
+      const [total, pending, accepted, inProgress, completed, cancelled] = await Promise.all([
+        Job.countDocuments(),
+        Job.countDocuments({ status: 'pending' }),
+        Job.countDocuments({ status: 'accepted' }),
+        Job.countDocuments({ status: 'in_progress' }),
+        Job.countDocuments({ status: 'completed' }),
+        Job.countDocuments({ status: 'cancelled' }),
+      ]);
+      stats = { total, pending, accepted, inProgress, completed, cancelled };
+      break;
+    }
+    case 'verification': {
+      const [pending, approved, rejected] = await Promise.all([
+        VerificationRequest.countDocuments({ status: 'pending' }),
+        VerificationRequest.countDocuments({ status: 'approved' }),
+        VerificationRequest.countDocuments({ status: 'rejected' }),
+      ]);
+      stats = { pending, approved, rejected, total: pending + approved + rejected };
+      break;
+    }
+    case 'disputes': {
+      const [open, underReview, resolved, dismissed] = await Promise.all([
+        Dispute.countDocuments({ status: 'open' }),
+        Dispute.countDocuments({ status: 'under_review' }),
+        Dispute.countDocuments({ status: 'resolved' }),
+        Dispute.countDocuments({ status: 'dismissed' }),
+      ]);
+      stats = {
+        open,
+        underReview,
+        resolved,
+        dismissed,
+        total: open + underReview + resolved + dismissed,
+      };
+      break;
+    }
+    default:
+      throw new AppError('Invalid page parameter.', 400);
+  }
+
+  res.json({ success: true, data: { stats } });
 });
 
 export const getAnalytics = asyncHandler(async (_req, res) => {
@@ -456,6 +586,165 @@ export const deleteCareer = asyncHandler(async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// HELP ARTICLES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const slugify = (s) =>
+  String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+export const getHelpArticles = asyncHandler(async (req, res) => {
+  const { page, limit, skip } = getPagination(req.query);
+  const [articles, total] = await Promise.all([
+    HelpArticle.find().sort({ category: 1, order: 1, createdAt: -1 }).skip(skip).limit(limit).lean(),
+    HelpArticle.countDocuments(),
+  ]);
+  res.json({
+    success: true,
+    data: { articles },
+    pagination: buildPaginationMeta(total, page, limit),
+  });
+});
+
+export const getHelpArticle = asyncHandler(async (req, res) => {
+  const article = await HelpArticle.findById(req.params.id);
+  if (!article) throw new AppError('Help article not found.', 404);
+  res.json({ success: true, data: { article } });
+});
+
+export const createHelpArticle = asyncHandler(async (req, res) => {
+  const { title, slug, category, emoji, excerpt, body, order, status } = req.body;
+  if (!title || !body) throw new AppError('title and body are required.', 400);
+
+  const article = await HelpArticle.create({
+    title,
+    slug: slug || slugify(title),
+    category,
+    emoji,
+    excerpt,
+    body,
+    order: order ?? 0,
+    status: status || 'draft',
+  });
+
+  res.status(201).json({ success: true, data: { article }, message: 'Help article created.' });
+});
+
+export const updateHelpArticle = asyncHandler(async (req, res) => {
+  const article = await HelpArticle.findById(req.params.id);
+  if (!article) throw new AppError('Help article not found.', 404);
+
+  const fields = ['title', 'slug', 'category', 'emoji', 'excerpt', 'body', 'order', 'status'];
+  for (const f of fields) if (req.body[f] !== undefined) article[f] = req.body[f];
+
+  await article.save();
+  res.json({ success: true, data: { article }, message: 'Help article updated.' });
+});
+
+export const deleteHelpArticle = asyncHandler(async (req, res) => {
+  const article = await HelpArticle.findByIdAndDelete(req.params.id);
+  if (!article) throw new AppError('Help article not found.', 404);
+  res.json({ success: true, message: 'Help article deleted.' });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FEED POSTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const getFeedPosts = asyncHandler(async (req, res) => {
+  const { page, limit, skip } = getPagination(req.query);
+  const [posts, total] = await Promise.all([
+    FeedPost.find()
+      .sort({ isFeatured: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+    FeedPost.countDocuments(),
+  ]);
+  res.json({
+    success: true,
+    data: { posts },
+    pagination: buildPaginationMeta(total, page, limit),
+  });
+});
+
+export const getFeedPost = asyncHandler(async (req, res) => {
+  const post = await FeedPost.findById(req.params.id);
+  if (!post) throw new AppError('Feed post not found.', 404);
+  res.json({ success: true, data: { post } });
+});
+
+export const createFeedPost = asyncHandler(async (req, res) => {
+  // Accept either modern (mediaUrl/mediaType) or legacy (imageUrl) payloads.
+  const {
+    title,
+    caption,
+    mediaType,
+    mediaUrl,
+    imageUrl, // legacy alias
+    posterUrl,
+    linkUrl,
+    tags,
+    isFeatured,
+    status,
+  } = req.body;
+
+  const finalMediaUrl = mediaUrl || imageUrl;
+  if (!title || !finalMediaUrl) {
+    throw new AppError('title and mediaUrl are required.', 400);
+  }
+  const finalMediaType = mediaType || 'image';
+  if (!['image', 'video'].includes(finalMediaType)) {
+    throw new AppError('mediaType must be "image" or "video".', 400);
+  }
+
+  const post = await FeedPost.create({
+    title,
+    caption,
+    mediaType: finalMediaType,
+    mediaUrl: finalMediaUrl,
+    posterUrl,
+    linkUrl,
+    tags: Array.isArray(tags) ? tags : [],
+    isFeatured: !!isFeatured,
+    status: status || 'draft',
+  });
+
+  res.status(201).json({ success: true, data: { post }, message: 'Feed post created.' });
+});
+
+export const updateFeedPost = asyncHandler(async (req, res) => {
+  const post = await FeedPost.findById(req.params.id);
+  if (!post) throw new AppError('Feed post not found.', 404);
+
+  // Accept legacy `imageUrl` as `mediaUrl`.
+  if (req.body.imageUrl !== undefined && req.body.mediaUrl === undefined) {
+    req.body.mediaUrl = req.body.imageUrl;
+  }
+
+  const fields = [
+    'title',
+    'caption',
+    'mediaType',
+    'mediaUrl',
+    'posterUrl',
+    'linkUrl',
+    'tags',
+    'isFeatured',
+    'status',
+  ];
+  for (const f of fields) if (req.body[f] !== undefined) post[f] = req.body[f];
+
+  await post.save();
+  res.json({ success: true, data: { post }, message: 'Feed post updated.' });
+});
+
+export const deleteFeedPost = asyncHandler(async (req, res) => {
+  const post = await FeedPost.findByIdAndDelete(req.params.id);
+  if (!post) throw new AppError('Feed post not found.', 404);
+  res.json({ success: true, message: 'Feed post deleted.' });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // DISPUTES
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -531,6 +820,15 @@ export const updateVerification = asyncHandler(async (req, res) => {
   if (!verification) throw new AppError('Verification request not found.', 404);
 
   const { status, reviewNote } = req.body;
+  const validStatuses = ['pending', 'approved', 'rejected', 'revoked'];
+  if (status && !validStatuses.includes(status)) {
+    throw new AppError(`Status must be one of ${validStatuses.join(', ')}.`, 400);
+  }
+  // Revocation requires a reason — it explains the change to the requestor.
+  if ((status === 'rejected' || status === 'revoked') && !reviewNote?.trim()) {
+    throw new AppError('A reason is required when rejecting or revoking verification.', 400);
+  }
+
   if (status) verification.status = status;
   if (reviewNote !== undefined) verification.reviewNote = reviewNote;
   verification.reviewedBy = req.user.id;
@@ -538,15 +836,67 @@ export const updateVerification = asyncHandler(async (req, res) => {
 
   await verification.save();
 
-  // When approved, set isVerified on the artisan/supplier profile
-  if (status === 'approved') {
-    const profile = await Profile.findById(verification.sellerId);
-    if (profile) {
-      if (profile.role === 'artisan') {
-        await ArtisanProfile.findOneAndUpdate({ profileId: profile._id }, { isVerified: true });
-      } else if (profile.role === 'supplier') {
-        await SupplierProfile.findOneAndUpdate({ profileId: profile._id }, { isVerified: true });
+  // Sync isVerified on the artisan/supplier profile.
+  // - approved → true
+  // - revoked  → false
+  const profile = await Profile.findById(verification.sellerId);
+  if (profile && (status === 'approved' || status === 'revoked')) {
+    const isVerified = status === 'approved';
+    if (profile.role === 'artisan') {
+      await ArtisanProfile.findOneAndUpdate({ profileId: profile._id }, { isVerified });
+    } else if (profile.role === 'supplier') {
+      await SupplierProfile.findOneAndUpdate({ profileId: profile._id }, { isVerified });
+    }
+  }
+
+  // Notify the seller for any status change that affects them.
+  if (profile && ['approved', 'rejected', 'revoked'].includes(status)) {
+    const sellerUserId = profile.userId;
+    const TITLES = {
+      approved: "You're verified ✓",
+      rejected: 'Verification could not be approved',
+      revoked: 'Verification revoked',
+    };
+    const BODIES = {
+      approved: `${verification.businessName} has been verified.`,
+      rejected: `Verification for ${verification.businessName} could not be approved.${
+        reviewNote ? ` Reason: ${reviewNote}` : ''
+      }`,
+      revoked: `Verified status for ${verification.businessName} has been revoked.${
+        reviewNote ? ` Reason: ${reviewNote}` : ''
+      }`,
+    };
+
+    try {
+      const notif = await Notification.create({
+        userId: sellerUserId,
+        title: TITLES[status],
+        body: BODIES[status],
+        type: `verification_${status}`,
+        data: { verificationId: verification._id, reviewNote: verification.reviewNote },
+      });
+      emitNotification(req, notif);
+    } catch (err) {
+      console.warn('[verification] notification failed:', err.message);
+    }
+
+    const sellerUser = await User.findById(sellerUserId).select('email');
+    if (sellerUser?.email) {
+      let tpl;
+      if (status === 'approved') {
+        tpl = verificationApproved({ businessName: verification.businessName });
+      } else {
+        // Reuse the rejected template for revoked too — both communicate
+        // "your verification isn't active" with a reason.
+        tpl = verificationRejected({
+          businessName: verification.businessName,
+          reviewNote: verification.reviewNote,
+        });
+        if (status === 'revoked') {
+          tpl.subject = 'Your verified status has been revoked';
+        }
       }
+      sendEmailSafe({ to: sellerUser.email, ...tpl });
     }
   }
 

@@ -4,6 +4,7 @@ import {
   list,
   getNearby,
   getById,
+  getMine,
   updateOnboarding,
   updateLocation,
   uploadPortfolio,
@@ -41,6 +42,9 @@ router.get(
   validate,
   getNearby
 );
+
+// ── GET /api/v1/artisans/me ──────────────────────────────────────────────────
+router.get('/me', protect, restrictTo('artisan'), getMine);
 
 // ── POST /api/v1/artisans/portfolio ──────────────────────────────────────────
 router.post(

@@ -47,10 +47,17 @@ export const initialize = asyncHandler(async (req, res) => {
     if (job.clientId.toString() !== profile._id.toString()) {
       throw new AppError('Not authorised.', 403);
     }
-    if (!job.budget || job.budget <= 0) {
-      throw new AppError('Job has no budget set.', 400);
+    if (job.status !== 'completed') {
+      throw new AppError('Job must be completed before payment.', 400);
     }
-    amount = job.budget;
+    if (job.paymentStatus === 'paid') {
+      throw new AppError('Job is already paid.', 400);
+    }
+    // Prefer the daily-rate-computed totalAmount; fall back to legacy budget for old rows.
+    amount = job.totalAmount && job.totalAmount > 0 ? job.totalAmount : job.budget;
+    if (!amount || amount <= 0) {
+      throw new AppError('Job has no payable amount.', 400);
+    }
     reference = `job_${entityId}_${Date.now()}`;
   } else {
     throw new AppError('type must be "order" or "job".', 400);
@@ -132,7 +139,7 @@ export const verify = asyncHandler(async (req, res) => {
         const n = await Notification.create({
           userId: job.artisanId.userId,
           title: 'Payment Received',
-          body: `Payment of ₦${job.budget.toLocaleString()} received for job "${job.title}".`,
+          body: `Payment of ₦${(job.totalAmount || job.budget || 0).toLocaleString()} received for job "${job.title}".`,
           type: 'job',
           data: { jobId: job._id },
         });
