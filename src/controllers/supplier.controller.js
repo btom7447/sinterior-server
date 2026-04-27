@@ -60,7 +60,7 @@ export const uploadLogo = asyncHandler(async (req, res) => {
 // ── GET /api/v1/suppliers/:profileId — public ──────────────────────────────
 export const getByProfileId = asyncHandler(async (req, res) => {
   const profile = await Profile.findById(req.params.profileId).select(
-    'fullName avatarUrl phone city state bio role createdAt'
+    'fullName avatarUrl phone city state bio role createdAt isSuspended'
   );
   if (!profile || profile.role !== 'supplier') {
     throw new AppError('Supplier not found.', 404);
@@ -85,6 +85,7 @@ export const getByProfileId = asyncHandler(async (req, res) => {
         state: profile.state,
         bio: profile.bio,
         memberSince: profile.createdAt,
+        isSuspended: !!profile.isSuspended,
       },
       business: supplier
         ? {

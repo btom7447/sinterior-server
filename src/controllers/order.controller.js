@@ -3,12 +3,16 @@ import Product from '../models/Product.js';
 import Profile from '../models/Profile.js';
 import User from '../models/User.js';
 import Notification from '../models/Notification.js';
+import EscrowEntry from '../models/EscrowEntry.js';
 import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import { emitNotification } from '../utils/emitNotification.js';
 import { sendEmailSafe } from '../utils/sendEmail.js';
+import { releaseEscrow, accrueCodFee } from '../services/wallet.service.js';
+import PlatformSetting from '../models/PlatformSetting.js';
+import Wallet from '../models/Wallet.js';
 import {
   orderPlacedClient,
   orderPlacedSupplier,
@@ -29,6 +33,9 @@ export const create = asyncHandler(async (req, res) => {
   if (!buyerProfile) {
     throw new AppError('Buyer profile not found.', 404);
   }
+  if (buyerProfile.isSuspended) {
+    throw new AppError('Your account is suspended. Contact admin to reinstate.', 403);
+  }
 
   const { items, deliveryAddress, deliveryState, city, contactName, contactPhone, note, paymentMethod, shippingCost: clientShippingCost } = req.body;
 
@@ -42,6 +49,16 @@ export const create = asyncHandler(async (req, res) => {
 
   if (products.length !== productIds.length) {
     throw new AppError('One or more products are unavailable or not found.', 400);
+  }
+
+  // Block orders containing items from suspended suppliers.
+  const supplierIds = [...new Set(products.map((p) => p.supplierId.toString()))];
+  const suspendedSuppliers = await Profile.find({
+    _id: { $in: supplierIds },
+    isSuspended: true,
+  }).select('_id');
+  if (suspendedSuppliers.length > 0) {
+    throw new AppError('One or more suppliers in this order are currently unavailable.', 400);
   }
 
   const productMap = new Map(products.map((p) => [p._id.toString(), p]));
@@ -130,8 +147,8 @@ export const create = asyncHandler(async (req, res) => {
   });
 
   // Notify each unique supplier about the new order
-  const supplierIds = [...new Set(enrichedItems.map((i) => i.supplierId.toString()))];
-  const supplierProfiles = await Profile.find({ _id: { $in: supplierIds } }).select('userId fullName');
+  const notifySupplierIds = [...new Set(enrichedItems.map((i) => i.supplierId.toString()))];
+  const supplierProfiles = await Profile.find({ _id: { $in: notifySupplierIds } }).select('userId fullName');
   for (const supplier of supplierProfiles) {
     const notification = await Notification.create({
       userId: supplier.userId,
@@ -417,6 +434,71 @@ export const approveDelivery = asyncHandler(async (req, res) => {
   }
 
   await order.save();
+
+  // On transition to delivered: release any escrow entries (online-paid orders)
+  // OR accrue COD platform fee if there's no escrow (cash-collected orders).
+  if (transitioned) {
+    // Read the held entry IDs first — we'll claim each one atomically below
+    // so a duplicate transition (rare but possible) doesn't double-release.
+    const heldEntries = await EscrowEntry.find({
+      entityType: 'order',
+      entityId: order._id,
+      status: 'held',
+    }).select('_id');
+
+    if (heldEntries.length > 0) {
+      for (const candidate of heldEntries) {
+        const entry = await EscrowEntry.findOneAndUpdate(
+          { _id: candidate._id, status: 'held' },
+          { status: 'released', releasedAt: new Date() },
+          { new: true }
+        );
+        if (!entry) continue; // claimed by a parallel call
+        const { feeAmount, netAmount } = await releaseEscrow({
+          sellerProfileId: entry.sellerProfileId,
+          amount: entry.amount,
+          source: 'order',
+          referenceId: order._id,
+        });
+        entry.feeAmount = feeAmount;
+        entry.netAmount = netAmount;
+        await entry.save();
+      }
+    } else {
+      // COD flow — no escrow ever existed (money went buyer → supplier in cash).
+      // Accrue platform fee per supplier so we can collect later.
+      const supplierTotals = new Map();
+      for (const item of order.items) {
+        const sid = item.supplierId.toString();
+        const lineKobo = Math.round(item.priceAtOrder * item.quantity * 100);
+        supplierTotals.set(sid, (supplierTotals.get(sid) || 0) + lineKobo);
+      }
+      const cfg = await PlatformSetting.getPaymentConfig();
+      for (const [supplierId, amountKobo] of supplierTotals) {
+        const { breachedThreshold, totalOwed } = await accrueCodFee({
+          sellerProfileId: supplierId,
+          orderAmountKobo: amountKobo,
+          source: 'order',
+          referenceId: order._id,
+        });
+        if (breachedThreshold) {
+          // Fan-out to every admin so they can intervene.
+          const admins = await User.find({ role: 'admin' }).select('_id');
+          const supplier = await Profile.findById(supplierId).select('fullName');
+          for (const admin of admins) {
+            const n = await Notification.create({
+              userId: admin._id,
+              title: 'COD fees over threshold',
+              body: `${supplier?.fullName || 'A supplier'} has accrued ₦${(totalOwed / 100).toLocaleString('en-NG')} in unpaid COD fees (threshold ₦${(cfg.codFeeThresholdKobo / 100).toLocaleString('en-NG')}).`,
+              type: 'admin_fee_threshold',
+              data: { supplierId, totalOwed },
+            });
+            emitNotification(req, n);
+          }
+        }
+      }
+    }
+  }
 
   // Notify the other party.
   const otherUserId = isBuyer ? null : order.buyerId.userId;

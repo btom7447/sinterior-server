@@ -15,10 +15,16 @@ import PlatformSetting from '../models/PlatformSetting.js';
 import ArtisanProfile from '../models/ArtisanProfile.js';
 import SupplierProfile from '../models/SupplierProfile.js';
 import Notification from '../models/Notification.js';
+import EscrowEntry from '../models/EscrowEntry.js';
+import PayoutRequest from '../models/PayoutRequest.js';
+import Wallet from '../models/Wallet.js';
+import WalletTransaction from '../models/WalletTransaction.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import { emitNotification } from '../utils/emitNotification.js';
 import { sendEmailSafe } from '../utils/sendEmail.js';
 import { verificationApproved, verificationRejected } from '../utils/emailTemplates.js';
+import { adjust, reversePayout } from '../services/wallet.service.js';
+import { issueRefund } from '../services/refund.service.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // STATS / ANALYTICS
@@ -775,7 +781,9 @@ export const updateDispute = asyncHandler(async (req, res) => {
   const dispute = await Dispute.findById(req.params.id);
   if (!dispute) throw new AppError('Dispute not found.', 404);
 
-  const { status, adminNote, resolution } = req.body;
+  // ruleFor: 'buyer' | 'seller' — when set on resolution, drives the refund decision.
+  // refundAmount: optional partial (kobo). Omit for full refund (only relevant when ruleFor='buyer').
+  const { status, adminNote, resolution, ruleFor, refundAmount } = req.body;
   if (status) dispute.status = status;
   if (adminNote !== undefined) dispute.adminNote = adminNote;
   if (resolution !== undefined) dispute.resolution = resolution;
@@ -786,7 +794,43 @@ export const updateDispute = asyncHandler(async (req, res) => {
   }
 
   await dispute.save();
-  res.json({ success: true, data: { dispute }, message: `Dispute ${status || 'updated'}.` });
+
+  // If admin resolved in favour of the buyer, fire the refund flow against
+  // the linked entity's escrow entry. The dispute can be on an order or job.
+  let refunded = null;
+  if (status === 'resolved' && ruleFor === 'buyer') {
+    const entityType = dispute.type; // 'order' | 'job'
+    const entityId = dispute.orderId || dispute.jobId;
+    if (entityId) {
+      const entry = await EscrowEntry.findOne({
+        entityType,
+        entityId,
+        status: { $in: ['held', 'released', 'partially_refunded'] },
+      });
+      if (entry) {
+        try {
+          const result = await issueRefund({
+            escrowEntryId: entry._id,
+            amount: refundAmount ? Number(refundAmount) : null,
+            reason: `Dispute ruled for buyer: ${resolution || dispute.reason}`,
+            adminUserId: req.user.id,
+          });
+          refunded = { amount: result.refundAmount, entryId: entry._id };
+        } catch (err) {
+          // Surface but don't block the dispute update — admin can retry refund manually.
+          console.warn(`[updateDispute] refund failed: ${err.message}`);
+        }
+      }
+    }
+  }
+
+  res.json({
+    success: true,
+    data: { dispute, refunded },
+    message: refunded
+      ? `Dispute ${status} — refunded ₦${(refunded.amount / 100).toLocaleString('en-NG')}.`
+      : `Dispute ${status || 'updated'}.`,
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -916,4 +960,340 @@ export const updateSettings = asyncHandler(async (req, res) => {
   const entries = Object.entries(req.body);
   await Promise.all(entries.map(([key, value]) => PlatformSetting.set(key, value)));
   res.json({ success: true, message: 'Settings saved.' });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PAYMENTS — escrow, payouts, wallets
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// GET /admin/escrow — list with optional status filter
+export const getEscrow = asyncHandler(async (req, res) => {
+  const { page, limit, skip } = getPagination(req.query);
+  const filter = {};
+  if (req.query.status) filter.status = req.query.status;
+  if (req.query.entityType) filter.entityType = req.query.entityType;
+
+  const [entries, total] = await Promise.all([
+    EscrowEntry.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate('buyerProfileId', 'fullName')
+      .populate('sellerProfileId', 'fullName')
+      .lean(),
+    EscrowEntry.countDocuments(filter),
+  ]);
+
+  res.json({
+    success: true,
+    data: { entries },
+    pagination: buildPaginationMeta(total, page, limit),
+  });
+});
+
+// GET /admin/payouts — payout queue
+export const getPayouts = asyncHandler(async (req, res) => {
+  const { page, limit, skip } = getPagination(req.query);
+  const filter = {};
+  if (req.query.status) filter.status = req.query.status;
+
+  const [payouts, total] = await Promise.all([
+    PayoutRequest.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate('profileId', 'fullName')
+      .populate('bankAccountId', 'accountNumber bankName accountName')
+      .lean(),
+    PayoutRequest.countDocuments(filter),
+  ]);
+
+  res.json({
+    success: true,
+    data: { payouts },
+    pagination: buildPaginationMeta(total, page, limit),
+  });
+});
+
+// POST /admin/payouts/:id/release-now — skip cooldown for a pending payout.
+// The cron will pick it up on the next tick (we just move scheduledFor to now).
+export const releasePayoutNow = asyncHandler(async (req, res) => {
+  const payout = await PayoutRequest.findById(req.params.id);
+  if (!payout) throw new AppError('Payout not found.', 404);
+  if (payout.status !== 'pending') {
+    throw new AppError(`Payout is already ${payout.status}.`, 400);
+  }
+  payout.scheduledFor = new Date();
+  await payout.save();
+  res.json({ success: true, data: { payout }, message: 'Cooldown released — cron will fire on next tick.' });
+});
+
+// POST /admin/payouts/:id/cancel — cancel a pending payout, refund the wallet.
+export const cancelPayout = asyncHandler(async (req, res) => {
+  const payout = await PayoutRequest.findById(req.params.id);
+  if (!payout) throw new AppError('Payout not found.', 404);
+  if (payout.status !== 'pending') {
+    throw new AppError('Only pending payouts can be cancelled.', 400);
+  }
+  payout.status = 'cancelled';
+  payout.failureReason = req.body?.reason || 'Cancelled by admin';
+  payout.processedAt = new Date();
+  await payout.save();
+  await reversePayout({
+    profileId: payout.profileId,
+    amount: payout.amount,
+    referenceId: payout._id,
+  });
+  res.json({ success: true, data: { payout }, message: 'Payout cancelled and wallet refunded.' });
+});
+
+// GET /admin/wallets/platform — platform fee account
+export const getPlatformWallet = asyncHandler(async (_req, res) => {
+  const wallet = await Wallet.getPlatform();
+  const recent = await WalletTransaction.find({ walletId: wallet._id })
+    .sort({ createdAt: -1 })
+    .limit(50)
+    .lean();
+  res.json({ success: true, data: { wallet, recent } });
+});
+
+// GET /admin/wallets/:profileId — inspect any seller wallet
+export const getSellerWallet = asyncHandler(async (req, res) => {
+  const wallet = await Wallet.findOne({ profileId: req.params.profileId })
+    .populate('profileId', 'fullName role')
+    .lean();
+  if (!wallet) throw new AppError('Wallet not found.', 404);
+  const recent = await WalletTransaction.find({ walletId: wallet._id })
+    .sort({ createdAt: -1 })
+    .limit(50)
+    .lean();
+  res.json({ success: true, data: { wallet, recent } });
+});
+
+// PATCH /admin/wallets/:profileId — toggle pause, set feeMode, custom hold/cooldown
+export const updateSellerWallet = asyncHandler(async (req, res) => {
+  const wallet = await Wallet.findOne({ profileId: req.params.profileId });
+  if (!wallet) throw new AppError('Wallet not found.', 404);
+
+  // Hard caps so admin can't accidentally lock a seller out (e.g. holdHours
+  // = 99999 ≈ never). Pick conservative ceilings; admin can still pause via
+  // the dedicated flag if they need a longer hold.
+  const MAX_HOLD_HOURS = 30 * 24;        // 30 days
+  const MAX_REVIEW_HOURS = 14 * 24;      // 14 days
+  const MAX_MIN_PAYOUT_KOBO = 10_000_000; // ₦100k
+
+  const allowed = [
+    'withdrawalsPaused',
+    'pauseReason',
+    'feeMode',
+    'customHoldHours',
+    'customPayoutReviewHours',
+    'customMinPayoutKobo',
+  ];
+  if (req.body.feeMode && !['per_transaction', 'weekly', 'monthly'].includes(req.body.feeMode)) {
+    throw new AppError('Invalid feeMode.', 400);
+  }
+  if (req.body.customHoldHours !== undefined) {
+    const h = Number(req.body.customHoldHours);
+    if (!Number.isFinite(h) || h < 0 || h > MAX_HOLD_HOURS) {
+      throw new AppError(`customHoldHours must be 0–${MAX_HOLD_HOURS}.`, 400);
+    }
+  }
+  if (req.body.customPayoutReviewHours !== undefined) {
+    const h = Number(req.body.customPayoutReviewHours);
+    if (!Number.isFinite(h) || h < 0 || h > MAX_REVIEW_HOURS) {
+      throw new AppError(`customPayoutReviewHours must be 0–${MAX_REVIEW_HOURS}.`, 400);
+    }
+  }
+  if (req.body.customMinPayoutKobo !== undefined) {
+    const v = Number(req.body.customMinPayoutKobo);
+    if (!Number.isFinite(v) || v < 0 || v > MAX_MIN_PAYOUT_KOBO) {
+      throw new AppError(`customMinPayoutKobo must be 0–${MAX_MIN_PAYOUT_KOBO}.`, 400);
+    }
+  }
+
+  for (const key of allowed) {
+    if (req.body[key] !== undefined) wallet[key] = req.body[key];
+  }
+  await wallet.save();
+  res.json({ success: true, data: { wallet }, message: 'Wallet updated.' });
+});
+
+// POST /admin/wallets/:profileId/adjust — manual ledger entry (any bucket)
+export const adjustSellerWallet = asyncHandler(async (req, res) => {
+  const { amount, bucket = 'available', reason } = req.body;
+  if (!amount || !reason?.trim()) {
+    throw new AppError('amount and reason are required.', 400);
+  }
+  // Whitelist the bucket so a typo can't silently mutate the wrong field.
+  if (!['pending', 'holding', 'available', 'feesOwed'].includes(bucket)) {
+    throw new AppError('Invalid bucket. Use pending, holding, available, or feesOwed.', 400);
+  }
+  const numAmount = Number(amount);
+  if (!Number.isFinite(numAmount) || numAmount === 0) {
+    throw new AppError('amount must be a non-zero number.', 400);
+  }
+  const wallet = await adjust({
+    profileId: req.params.profileId,
+    amount: numAmount,
+    bucket,
+    reason: reason.trim(),
+  });
+  res.json({ success: true, data: { wallet }, message: 'Adjustment applied.' });
+});
+
+// POST /admin/settings/global-pause — emergency kill-switch
+export const setGlobalPause = asyncHandler(async (req, res) => {
+  const { paused } = req.body;
+  await PlatformSetting.set('globalPayoutsPaused', !!paused);
+  res.json({
+    success: true,
+    message: paused
+      ? 'Global payouts paused.'
+      : 'Global payouts resumed.',
+  });
+});
+
+// POST /admin/escrow/:id/refund — issue full or partial refund
+export const refundEscrow = asyncHandler(async (req, res) => {
+  const { amount, reason } = req.body;
+  if (!reason?.trim()) throw new AppError('Reason is required for refunds.', 400);
+  const { refundAmount, entry } = await issueRefund({
+    escrowEntryId: req.params.id,
+    amount: amount ? Number(amount) : null,
+    reason: reason.trim(),
+    adminUserId: req.user.id,
+  });
+  res.json({
+    success: true,
+    data: { entry, refundAmount },
+    message: `Refunded ₦${(refundAmount / 100).toLocaleString('en-NG')}.`,
+  });
+});
+
+// POST /admin/escrow/:id/release — force-release an escrow entry (override delivery flow)
+export const forceReleaseEscrow = asyncHandler(async (req, res) => {
+  const { reason } = req.body;
+  if (!reason?.trim()) throw new AppError('Reason is required for force-release.', 400);
+  // Atomic claim — admin double-click can't double-release.
+  const entry = await EscrowEntry.findOneAndUpdate(
+    { _id: req.params.id, status: 'held' },
+    {
+      status: 'released',
+      releasedAt: new Date(),
+      adminOverrideReason: reason.trim(),
+      adminOverrideBy: req.user.id,
+    },
+    { new: true }
+  );
+  if (!entry) {
+    // Either not found or already non-held.
+    const existing = await EscrowEntry.findById(req.params.id).select('status');
+    if (!existing) throw new AppError('Escrow entry not found.', 404);
+    throw new AppError(`Cannot force-release — entry is ${existing.status}.`, 400);
+  }
+  const { releaseEscrow } = await import('../services/wallet.service.js');
+  const { feeAmount, netAmount } = await releaseEscrow({
+    sellerProfileId: entry.sellerProfileId,
+    amount: entry.amount,
+    source: entry.entityType,
+    referenceId: entry.entityId,
+  });
+  entry.feeAmount = feeAmount;
+  entry.netAmount = netAmount;
+  await entry.save();
+  res.json({ success: true, data: { entry }, message: `Force-released. Reason: ${reason}` });
+});
+
+// POST /admin/wallets/:profileId/suspend
+export const suspendSeller = asyncHandler(async (req, res) => {
+  const { reason } = req.body;
+  if (!reason?.trim()) throw new AppError('Reason is required.', 400);
+  const profile = await Profile.findById(req.params.profileId);
+  if (!profile) throw new AppError('Profile not found.', 404);
+  profile.isSuspended = true;
+  profile.suspensionReason = reason.trim();
+  profile.suspendedAt = new Date();
+  profile.suspendedBy = req.user.id;
+  await profile.save();
+  // Also pause payouts if not already.
+  await Wallet.findOneAndUpdate(
+    { profileId: profile._id },
+    { withdrawalsPaused: true, pauseReason: `Suspended: ${reason.trim()}` }
+  );
+  // Notify the seller.
+  await Notification.create({
+    userId: profile.userId,
+    title: 'Account suspended',
+    body: `Your account has been suspended. Reason: ${reason.trim()}. Contact admin to resolve.`,
+    type: 'admin',
+    data: { reason: reason.trim() },
+  });
+  res.json({ success: true, data: { profile }, message: 'Seller suspended.' });
+});
+
+// POST /admin/wallets/:profileId/unsuspend
+export const unsuspendSeller = asyncHandler(async (req, res) => {
+  const profile = await Profile.findById(req.params.profileId);
+  if (!profile) throw new AppError('Profile not found.', 404);
+  profile.isSuspended = false;
+  profile.suspensionReason = undefined;
+  profile.suspendedAt = undefined;
+  profile.suspendedBy = undefined;
+  await profile.save();
+
+  // Auto-unpause payouts ONLY if the wallet isn't separately in the red.
+  // A negative balance keeps payouts paused on its own — clearing the
+  // suspension shouldn't bypass that gate.
+  const wallet = await Wallet.findOne({ profileId: profile._id });
+  if (wallet && wallet.availableBalance >= 0) {
+    wallet.withdrawalsPaused = false;
+    wallet.pauseReason = undefined;
+    await wallet.save();
+  } else if (wallet) {
+    wallet.pauseReason = 'Wallet negative — settle balance to resume payouts.';
+    await wallet.save();
+  }
+
+  await Notification.create({
+    userId: profile.userId,
+    title: 'Account reinstated',
+    body:
+      wallet && wallet.availableBalance < 0
+        ? 'Your account has been reinstated. Payouts remain paused until your wallet balance clears the negative.'
+        : 'Your account has been reinstated. You can resume normal activity.',
+    type: 'admin',
+  });
+  res.json({ success: true, data: { profile }, message: 'Seller unsuspended.' });
+});
+
+// POST /admin/wallets/:profileId/send-fee-reminder
+export const sendFeeReminder = asyncHandler(async (req, res) => {
+  const profile = await Profile.findById(req.params.profileId);
+  if (!profile) throw new AppError('Profile not found.', 404);
+  const wallet = await Wallet.findOrCreate(profile._id);
+  if ((wallet.feesOwed || 0) <= 0) {
+    throw new AppError('No fees owed.', 400);
+  }
+  await Notification.create({
+    userId: profile.userId,
+    title: 'Outstanding platform fees',
+    body: `You owe ₦${(wallet.feesOwed / 100).toLocaleString('en-NG')} in platform fees. Settle from your wallet to avoid suspension.`,
+    type: 'admin',
+    data: { feesOwed: wallet.feesOwed },
+  });
+  // Email reminder
+  const user = await User.findById(profile.userId).select('email');
+  if (user?.email) {
+    sendEmailSafe({
+      to: user.email,
+      subject: 'Outstanding platform fees on Sintherior',
+      html: `
+        <p>Hi ${profile.fullName || ''},</p>
+        <p>Your wallet currently shows outstanding platform fees of <strong>₦${(wallet.feesOwed / 100).toLocaleString('en-NG')}</strong>.</p>
+        <p>Please settle from your earnings or contact admin to resolve.</p>
+      `,
+    });
+  }
+  res.json({ success: true, message: 'Reminder sent.' });
 });

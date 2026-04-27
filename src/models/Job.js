@@ -111,6 +111,18 @@ const jobSchema = new mongoose.Schema(
       type: String,
       enum: ['client', 'artisan'],
     },
+
+    // Escrow + work-acceptance fields (Phase 1 of payments work).
+    escrowEntryId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'EscrowEntry',
+    },
+    // Client confirms the work meets standard → triggers escrow release.
+    workAccepted: { type: Boolean, default: false },
+    workAcceptedAt: { type: Date },
+    // If client doesn't accept by this time and there's no open dispute,
+    // the autoAcceptJobs cron releases automatically.
+    workAutoAcceptAt: { type: Date },
   },
   { timestamps: true }
 );

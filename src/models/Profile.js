@@ -52,6 +52,13 @@ const profileSchema = new mongoose.Schema(
       landInsurance: { type: Boolean, default: true },
       fireAlarm: { type: Boolean, default: false },
     },
+
+    // Admin moderation. Suspended sellers can't accept new orders/jobs but
+    // existing in-progress work continues to completion.
+    isSuspended: { type: Boolean, default: false },
+    suspensionReason: { type: String, trim: true, maxlength: 500 },
+    suspendedAt: { type: Date },
+    suspendedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   {
     timestamps: true,

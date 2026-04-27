@@ -120,6 +120,14 @@ const orderSchema = new mongoose.Schema(
     buyerDeliveryApproved: { type: Boolean, default: false },
     supplierDeliveryApproved: { type: Boolean, default: false },
     deliveredAt: { type: Date },
+
+    // Reference to the first escrow entry created at payment time. Multi-supplier
+    // orders have several entries linked via EscrowEntry.entityId; this field
+    // is convenience for single-supplier orders.
+    escrowEntryId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'EscrowEntry',
+    },
   },
   {
     timestamps: true,

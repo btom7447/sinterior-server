@@ -16,6 +16,7 @@ import config from './src/config/env.js';
 import connectDB from './src/config/db.js';
 import app from './src/app.js';
 import initSocket from './src/socket.js';
+import { startCronJobs } from './src/jobs/index.js';
 
 // ── Uncaught exception guard ──────────────────────────────────────────────────
 // Must be registered BEFORE any async code runs
@@ -82,6 +83,9 @@ const boot = async () => {
     );
     console.log(`[Server] Health check → http://localhost:${config.PORT}/health`);
   });
+
+  // Start cron jobs after DB is connected and server is listening.
+  startCronJobs();
 };
 
 boot();

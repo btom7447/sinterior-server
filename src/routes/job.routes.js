@@ -11,6 +11,7 @@ import {
   cancelJob,
   approveStart,
   approveEnd,
+  acceptWork,
 } from '../controllers/job.controller.js';
 
 const router = Router();
@@ -28,5 +29,6 @@ router.post('/:id/reject', rejectJob);
 router.post('/:id/cancel', cancelJob);
 router.post('/:id/approve-start', approveStart);
 router.post('/:id/approve-end', approveEnd);
+router.post('/:id/accept-work', acceptWork);
 
 export default router;

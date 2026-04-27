@@ -7,10 +7,12 @@ import Profile from '../models/Profile.js';
 import User from '../models/User.js';
 import ArtisanProfile from '../models/ArtisanProfile.js';
 import Notification from '../models/Notification.js';
+import EscrowEntry from '../models/EscrowEntry.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import validate from '../middleware/validate.js';
 import { emitNotification } from '../utils/emitNotification.js';
 import { sendEmailSafe } from '../utils/sendEmail.js';
+import { releaseEscrow } from '../services/wallet.service.js';
 import { jobCreatedArtisan, jobStatusChanged, appointmentBooked } from '../utils/emailTemplates.js';
 
 // ── Validators ────────────────────────────────────────────────────────────────
@@ -70,8 +72,14 @@ export const createJob = asyncHandler(async (req, res) => {
   } = req.body;
 
   // Verify artisan and snapshot their daily rate
-  const artisanProfile = await Profile.findById(artisanId).select('userId fullName');
+  const artisanProfile = await Profile.findById(artisanId).select('userId fullName isSuspended');
   if (!artisanProfile) throw new AppError('Artisan not found.', 404);
+  if (artisanProfile.isSuspended) {
+    throw new AppError('This artisan is currently unavailable for new hires.', 400);
+  }
+  if (clientProfile.isSuspended) {
+    throw new AppError('Your account is suspended. Contact admin to reinstate.', 403);
+  }
 
   const artisanDoc = await ArtisanProfile.findOne({ profileId: artisanId }).select('pricePerDay');
   const dailyRate = artisanDoc?.pricePerDay ?? 0;
@@ -489,4 +497,60 @@ export const approveEnd = asyncHandler(async (req, res) => {
     data: { job },
     message: transitioned ? 'Job completed.' : 'End approved — waiting on the other party.',
   });
+});
+
+// POST /api/v1/jobs/:id/accept-work — client confirms the work meets standard.
+// This releases escrow to the artisan (after the platform hold period). Once
+// accepted, no dispute can be raised — surfaced clearly in the client-side modal.
+export const acceptWork = asyncHandler(async (req, res) => {
+  const { job } = await loadJobAndAuth(req, 'client');
+
+  if (job.status !== 'completed') {
+    throw new AppError('Job must be completed before work can be accepted.', 400);
+  }
+  if (job.paymentStatus !== 'paid') {
+    throw new AppError('Job must be paid before work can be accepted.', 400);
+  }
+  if (job.workAccepted) {
+    return res.json({
+      success: true,
+      data: { job },
+      message: 'Work already accepted.',
+    });
+  }
+
+  job.workAccepted = true;
+  job.workAcceptedAt = new Date();
+  await job.save();
+
+  // Atomic claim — flip held → released in one shot. If a parallel call
+  // (button double-click, racing webhook) already claimed it, skip the wallet
+  // mutation. Prevents double-credit.
+  const entry = await EscrowEntry.findOneAndUpdate(
+    { entityType: 'job', entityId: job._id, status: 'held' },
+    { status: 'released', releasedAt: new Date() },
+    { new: true }
+  );
+  if (entry) {
+    const { feeAmount, netAmount } = await releaseEscrow({
+      sellerProfileId: entry.sellerProfileId,
+      amount: entry.amount,
+      source: 'job',
+      referenceId: job._id,
+    });
+    entry.feeAmount = feeAmount;
+    entry.netAmount = netAmount;
+    await entry.save();
+  }
+
+  await notifyParty({
+    req,
+    recipientUserId: job.artisanId.userId,
+    title: 'Client accepted your work',
+    body: `${job.clientId.fullName} accepted "${job.title}". Funds release to your wallet after the hold period.`,
+    type: 'job',
+    data: { jobId: job._id, status: 'accepted' },
+  });
+
+  res.json({ success: true, data: { job }, message: 'Work accepted, funds released.' });
 });

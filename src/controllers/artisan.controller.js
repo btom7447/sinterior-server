@@ -23,7 +23,7 @@ export const list = asyncHandler(async (req, res) => {
   const [total, artisans] = await Promise.all([
     ArtisanProfile.countDocuments(filter),
     ArtisanProfile.find(filter)
-      .populate({ path: 'profileId', select: 'fullName avatarUrl phone city state bio' })
+      .populate({ path: 'profileId', select: 'fullName avatarUrl phone city state bio isSuspended' })
       .sort({ rating: -1, reviewCount: -1 })
       .skip(skip)
       .limit(limit)
@@ -99,6 +99,7 @@ export const getNearby = asyncHandler(async (req, res) => {
       'profile.fullName': 1,
       'profile.avatarUrl': 1,
       'profile.phone': 1,
+      'profile.isSuspended': 1,
     },
   };
 
@@ -174,7 +175,7 @@ export const getNearby = asyncHandler(async (req, res) => {
 export const getById = asyncHandler(async (req, res) => {
   const artisan = await ArtisanProfile.findById(req.params.id).populate({
     path: 'profileId',
-    select: 'fullName avatarUrl phone city state bio',
+    select: 'fullName avatarUrl phone city state bio isSuspended',
     populate: { path: 'userId', select: 'email role isEmailVerified' },
   });
 

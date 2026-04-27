@@ -36,6 +36,20 @@ import {
   updateVerification,
   getSettings,
   updateSettings,
+  getEscrow,
+  getPayouts,
+  releasePayoutNow,
+  cancelPayout,
+  getPlatformWallet,
+  getSellerWallet,
+  updateSellerWallet,
+  adjustSellerWallet,
+  setGlobalPause,
+  refundEscrow,
+  forceReleaseEscrow,
+  suspendSeller,
+  unsuspendSeller,
+  sendFeeReminder,
 } from '../controllers/admin.controller.js';
 
 const router = Router();
@@ -99,5 +113,21 @@ router.patch('/verifications/:id', updateVerification);
 // Platform Settings
 router.get('/settings', getSettings);
 router.patch('/settings', updateSettings);
+router.post('/settings/global-pause', setGlobalPause);
+
+// Payments — escrow viewer, payouts, wallets
+router.get('/escrow', getEscrow);
+router.post('/escrow/:id/refund', refundEscrow);
+router.post('/escrow/:id/release', forceReleaseEscrow);
+router.get('/payouts', getPayouts);
+router.post('/payouts/:id/release-now', releasePayoutNow);
+router.post('/payouts/:id/cancel', cancelPayout);
+router.get('/wallets/platform', getPlatformWallet);
+router.get('/wallets/:profileId', getSellerWallet);
+router.patch('/wallets/:profileId', updateSellerWallet);
+router.post('/wallets/:profileId/adjust', adjustSellerWallet);
+router.post('/wallets/:profileId/suspend', suspendSeller);
+router.post('/wallets/:profileId/unsuspend', unsuspendSeller);
+router.post('/wallets/:profileId/send-fee-reminder', sendFeeReminder);
 
 export default router;

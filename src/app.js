@@ -40,6 +40,9 @@ import helpRoutes from './routes/help.routes.js';
 import feedRoutes from './routes/feed.routes.js';
 import verificationRoutes from './routes/verification.routes.js';
 import disputeRoutes from './routes/dispute.routes.js';
+import walletRoutes from './routes/wallet.routes.js';
+import bankRoutes from './routes/bank.routes.js';
+import payoutRoutes from './routes/payout.routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -76,7 +79,13 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
 // ── 3. Request parsing ────────────────────────────────────────────────────────
-app.use(express.json({ limit: '10kb' }));
+// Skip JSON parsing on the Paystack webhook path — it needs the raw body
+// buffer to verify the HMAC signature byte-for-byte. The route handler mounts
+// its own express.raw parser.
+app.use((req, res, next) => {
+  if (req.originalUrl === '/api/v1/payments/webhook') return next();
+  return express.json({ limit: '10kb' })(req, res, next);
+});
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 app.use(cookieParser());
 
@@ -151,6 +160,9 @@ app.use('/api/v1/help', helpRoutes);
 app.use('/api/v1/feed', feedRoutes);
 app.use('/api/v1/verification', verificationRoutes);
 app.use('/api/v1/disputes', disputeRoutes);
+app.use('/api/v1/wallet', walletRoutes);
+app.use('/api/v1', bankRoutes); // mounts /banks, /banks/resolve, /bank-accounts
+app.use('/api/v1/payouts', payoutRoutes);
 
 // ── 11. 404 — catch-all for unmatched routes ──────────────────────────────────
 app.use((req, _res, next) => {

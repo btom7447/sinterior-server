@@ -45,5 +45,30 @@ platformSettingSchema.statics.getAll = async function () {
   return result;
 };
 
+// Payment / escrow defaults. Used as fallback when a key isn't set in DB.
+platformSettingSchema.statics.PAYMENT_DEFAULTS = Object.freeze({
+  orderFeeBps: 500,             // 5%
+  jobFeeBps: 700,               // 7%
+  holdHours: 24,
+  payoutReviewHours: 24,
+  workAcceptanceDays: 7,
+  minPayoutKobo: 500000,        // ₦5,000
+  scheduledFeeWeekday: 1,       // Monday
+  codFeeMode: 'accrue',
+  codFeeThresholdKobo: 5000000, // ₦50,000
+  globalPayoutsPaused: false,
+  passPaystackFee: false,
+});
+
+// Returns a single payment-config object with DB overrides applied over defaults.
+platformSettingSchema.statics.getPaymentConfig = async function () {
+  const all = await this.getAll();
+  const cfg = { ...this.PAYMENT_DEFAULTS };
+  for (const key of Object.keys(this.PAYMENT_DEFAULTS)) {
+    if (all[key] !== undefined) cfg[key] = all[key];
+  }
+  return cfg;
+};
+
 const PlatformSetting = mongoose.model('PlatformSetting', platformSettingSchema);
 export default PlatformSetting;

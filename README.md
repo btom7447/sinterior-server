@@ -1,351 +1,458 @@
 # Sintherior — Server
 
-The Express.js REST API backend for **Sintherior**, a marketplace connecting verified artisans, trusted suppliers, and clients across the Nigerian construction and interior design industry.
+Express + Mongoose REST API for **Sintherior**. Powers the marketplace, real-time chat, payments, super-admin CMS, and verification workflow.
 
 ---
 
 ## Tech Stack
 
-| Layer            | Technology                                        |
-| ---------------- | ------------------------------------------------- |
-| Runtime          | Node.js 22                                        |
-| Framework        | Express 4.19                                      |
-| Database         | MongoDB (Mongoose 8.4 ODM)                        |
-| Authentication   | JWT (access + refresh tokens), bcryptjs            |
-| File Uploads     | Multer + Sharp (resize to 400x400 WebP)           |
-| Validation       | express-validator                                 |
-| Real-Time        | Socket.IO (chat, typing indicators, presence)     |
-| Security         | Helmet, CORS, express-mongo-sanitize, HPP         |
-| Rate Limiting    | express-rate-limit                                |
-| Logging          | Morgan                                            |
-| Module System    | ES Modules (`"type": "module"`)                   |
+| Layer            | Technology                                                              |
+|------------------|-------------------------------------------------------------------------|
+| Runtime          | Node.js 22, ES Modules                                                  |
+| Framework        | Express 4                                                               |
+| Database         | MongoDB Atlas + Mongoose 8 (2dsphere geo index on artisans)             |
+| Auth             | JWT (access in body + refresh as httpOnly cookie), bcrypt 12            |
+| Real-Time        | Socket.IO 4 (chat, typing, presence, notifications)                     |
+| Uploads          | Multer (memory) → Cloudinary (image/video/PDF)                          |
+| Email            | Resend SDK                                                              |
+| Payments         | Paystack (initialize, verify, webhook, transfers, refunds, account-resolve) |
+| Escrow           | Custom 3-bucket wallet ledger + EscrowEntry + PayoutRequest             |
+| Cron             | node-cron + Mongo-backed leases (multi-instance safe)                   |
+| Validation       | express-validator                                                        |
+| Security         | Helmet, CORS, express-mongo-sanitize, rate limiting, raw-body HMAC for webhook |
 
 ---
 
 ## Getting Started
 
 ### Prerequisites
-
-- Node.js 22+ (with npm >= 9)
-- MongoDB instance (local or Atlas)
+- Node 22+
+- MongoDB Atlas cluster (or local Mongo)
+- Cloudinary account
+- Optional: Resend, Paystack
 
 ### Install
-
 ```bash
 cd server
 npm install
+cp .env.example .env.local
+npm run dev    # nodemon, http://localhost:5000
 ```
 
-### Environment Variables
+Health check: `GET /health` returns 200 when DB is connected.
 
-Copy `.env.example` to `.env` and fill in your values:
-
+### Seed scripts
 ```bash
-cp .env.example .env
+node --env-file=.env.local src/scripts/seedAdmin.js          # admin@sintherior.com / Admin@12345
+node --env-file=.env.local src/scripts/seedContent.js        # blog posts + careers listings
+node --env-file=.env.local src/scripts/seedHelpAndFeed.js    # help articles + feed posts
+node --env-file=.env.local src/scripts/verifyEmail.js <email># mark a user verified in dev
 ```
 
-| Variable                | Description                              | Default         |
-| ----------------------- | ---------------------------------------- | --------------- |
-| `NODE_ENV`              | `development`, `production`, or `test`   | `development`   |
-| `PORT`                  | Server port                              | `5000`          |
-| `CLIENT_URL`            | Frontend URL (CORS origin)               | `http://localhost:3000` |
-| `MONGO_URI`             | MongoDB connection string                | —               |
-| `JWT_ACCESS_SECRET`     | Access token secret (min 64 chars)       | —               |
-| `JWT_REFRESH_SECRET`    | Refresh token secret (min 64 chars)      | —               |
-| `JWT_ACCESS_EXPIRES_IN` | Access token TTL                         | `15m`           |
-| `JWT_REFRESH_EXPIRES_IN`| Refresh token TTL                        | `7d`            |
-| `UPLOAD_DIR`            | Directory for uploaded files             | `uploads`       |
-| `MAX_FILE_SIZE_MB`      | Max upload size in MB                    | `5`             |
-| `SMTP_HOST`             | SMTP server hostname                     | —               |
-| `SMTP_PORT`             | SMTP port                                | `587`           |
-| `SMTP_USER`             | SMTP username                            | —               |
-| `SMTP_PASS`             | SMTP password                            | —               |
-| `EMAIL_FROM`            | Sender email display                     | —               |
-| `RATE_LIMIT_WINDOW_MS`  | Rate limit window                        | `900000` (15m)  |
-| `RATE_LIMIT_MAX`        | Max requests per window                  | `100`           |
-| `AUTH_RATE_LIMIT_MAX`   | Max auth requests per window             | `10`            |
+---
 
-### Development
+## Environment
 
-```bash
-npm run dev
-```
+| Variable                  | Required | Notes                                                |
+|---------------------------|----------|------------------------------------------------------|
+| `NODE_ENV`                | No       | `development` / `production`                         |
+| `PORT`                    | No       | Default `5000`                                       |
+| `MONGO_URI`               | Yes      | Connection string                                    |
+| `CLIENT_URL`              | No       | CORS origin (comma-separated for multi)              |
+| `CLIENT_APP_URL`          | No       | Canonical client URL for email links + Paystack callback |
+| `JWT_ACCESS_SECRET`       | Yes      | 64+ char hex                                         |
+| `JWT_REFRESH_SECRET`      | Yes      | 64+ char hex                                         |
+| `JWT_ACCESS_EXPIRES_IN`   | No       | Default `15m`                                        |
+| `JWT_REFRESH_EXPIRES_IN`  | No       | Default `7d`                                         |
+| `MAX_FILE_SIZE_MB`        | No       | Default `5`                                          |
+| `CLOUDINARY_CLOUD_NAME`   | Yes\*    | For all uploads                                      |
+| `CLOUDINARY_API_KEY`      | Yes\*    |                                                      |
+| `CLOUDINARY_API_SECRET`   | Yes\*    |                                                      |
+| `RESEND_API_KEY`          | No       | Falls back to console log in dev                     |
+| `EMAIL_FROM`              | No       | Default `Sintherior <noreply@sintherior.com>`        |
+| `PAYSTACK_SECRET_KEY`     | Yes\*\*  | Required for live escrow + payouts. HMAC-checked on webhook. |
+| `PAYSTACK_PUBLIC_KEY`     | No       | Optional, used for client-side init flows.           |
+| `RATE_LIMIT_WINDOW_MS`    | No       | Default 900000 (15m)                                 |
+| `RATE_LIMIT_MAX`          | No       | General limiter                                      |
+| `AUTH_RATE_LIMIT_MAX`     | No       | Tighter limit on `/auth/*`                           |
 
-Runs with nodemon on `http://localhost:5000`. Health check at `/health`.
+\* Cloudinary required wherever files are uploaded.
 
-### Production
-
-```bash
-npm start
-```
+\*\* Paystack required for the escrow + payouts pipeline. Without a secret key the webhook can't verify HMAC signatures and transfers won't dispatch.
 
 ---
 
 ## Project Structure
 
 ```
-server.js                       # Entry point — env validation, DB connect, Socket.IO attach, graceful shutdown
+server.js                              # Entry — env validation, DB connect, Socket.IO attach, graceful shutdown
 src/
-├── app.js                      # Express setup — middleware stack, route registration, error handling
+├── app.js                             # Express setup — middleware, route registration, error handler
 ├── config/
-│   ├── db.js                   # MongoDB connection via Mongoose
-│   └── env.js                  # Environment variable validation & config object
+│   ├── db.js                          # Mongoose connection
+│   └── env.js                         # Env validation + config object
 ├── controllers/
-│   ├── auth.controller.js      # Login, register, refresh, password reset/change
-│   ├── profile.controller.js   # Profile CRUD, avatar upload
-│   ├── artisan.controller.js   # Artisan listing, detail, nearby search, onboarding
-│   ├── supplier.controller.js  # Supplier onboarding, profile
-│   ├── product.controller.js   # Product CRUD & search
-│   ├── property.controller.js  # Property CRUD & search
-│   ├── order.controller.js     # Order creation, status updates
-│   ├── job.controller.js       # Job posting, status transitions
-│   ├── project.controller.js   # Project management
-│   ├── appointment.controller.js # Appointment scheduling
-│   ├── chat.controller.js      # Conversations, messages, user search, chat access control
-│   ├── notification.controller.js # Notification management
-│   ├── review.controller.js    # Review submission & retrieval
-│   ├── bookmark.controller.js  # Save/unsave items
-│   └── dashboard.controller.js # Dashboard stats & recent orders
+│   ├── auth.controller.js             # Register, login, refresh, password reset, email verify
+│   ├── profile.controller.js          # Profile CRUD, avatar upload
+│   ├── artisan.controller.js          # List + nearby (city fallback) + getMine + onboarding
+│   ├── supplier.controller.js         # Onboarding, business details
+│   ├── product.controller.js          # CRUD + search
+│   ├── property.controller.js         # CRUD + search
+│   ├── order.controller.js            # Create, list, status updates, approve-delivery (+ escrow release / COD fee accrual)
+│   ├── job.controller.js              # Create, accept/reject/cancel/approve-start/approve-end, accept-work, getActiveJobs
+│   ├── payment.controller.js          # Initialize, verify (amount-checked), webhook (raw-body HMAC),
+│   │                                  #   idempotent escrow creation, transfer success/failure handling
+│   ├── project.controller.js
+│   ├── appointment.controller.js
+│   ├── chat.controller.js             # Conversations, messages, search, canChat() guard
+│   ├── notification.controller.js
+│   ├── review.controller.js
+│   ├── bookmark.controller.js
+│   ├── dashboard.controller.js        # Role-specific stats + recent orders
+│   └── admin.controller.js            # Stats, page-stats, users, orders, products, blog, careers,
+│                                      #   help, feed, disputes, verifications, settings, escrow
+│                                      #   refund/release, payouts release/cancel, platform & seller
+│                                      #   wallets, suspend/unsuspend, fee reminders, global pause
+├── services/
+│   ├── wallet.service.js              # Single source of truth for wallet mutations:
+│   │                                  #   creditEscrow / releaseEscrow / promoteExpiredHolds /
+│   │                                  #   debitPayout (atomic) / reversePayout / refundFromSeller /
+│   │                                  #   accrueCodFee / adjust. Bucket whitelist + lifetime totals.
+│   └── refund.service.js              # Issue refund with Paystack rollback if seller-debit succeeded
+│                                      #   but Paystack call fails.
+├── jobs/
+│   ├── index.js                       # Cron registration. Each handler wrapped in withLock for
+│   │                                  #   multi-instance safety.
+│   ├── expireHoldPeriod.js            # Hourly :05 — promote holding → available for entries past availableAt
+│   ├── processPayoutCooldown.js       # Hourly :15 — fire pending payouts whose scheduledFor elapsed
+│   │                                  #   (atomic claim, stable Paystack reference)
+│   ├── autoAcceptJobs.js              # Daily 02:00 — auto-release escrow on completed+paid jobs the
+│   │                                  #   client never accepted (uses workAutoAcceptAt; legacy fallback)
+│   └── invoiceScheduledFees.js        # Mondays 02:00 — deduct accrued feesOwed from seller wallets,
+│                                      #   force-pause + admin notify if balance goes negative
 ├── middleware/
-│   ├── auth.js                 # JWT verification, role-based access (protect, authorize)
-│   ├── errorHandler.js         # Global error handler with status codes
-│   ├── rateLimiter.js          # General & auth-specific rate limiting
-│   ├── upload.js               # Multer config + Sharp image processing
-│   └── validate.js             # express-validator middleware
+│   ├── auth.js                        # protect + restrictTo(...roles)
+│   ├── errorHandler.js
+│   ├── rateLimiter.js                 # generalLimiter + authLimiter
+│   ├── upload.js                      # Multer (memory) → Cloudinary stream upload
+│   └── validate.js                    # express-validator wrapper
 ├── models/
-│   ├── User.js                 # User accounts (email, password, role, refresh tokens)
-│   ├── Profile.js              # User profiles (name, avatar, phone, bio, city, state, settings)
-│   ├── ArtisanProfile.js       # Artisan-specific (skill, portfolio, certs, location, rates)
-│   ├── SupplierProfile.js      # Supplier-specific (business info, delivery, banking)
-│   ├── Product.js              # Marketplace products
-│   ├── Property.js             # Real estate listings
-│   ├── Order.js                # Customer orders
-│   ├── OrderItem.js            # Individual order line items
-│   ├── Job.js                  # Job postings between clients & artisans
-│   ├── Project.js              # Project tracking
-│   ├── Appointment.js          # Scheduled appointments
-│   ├── Message.js              # Chat messages
-│   ├── Notification.js         # User notifications
-│   ├── Review.js               # Ratings & reviews
-│   ├── Bookmark.js             # Saved items / wishlists
-│   └── ContactInquiry.js       # Contact form submissions
+│   ├── User.js                        # email, passwordHash, role, isEmailVerified, isBanned
+│   ├── Profile.js                     # userId, fullName, avatarUrl, phone, city, state, role
+│   ├── ArtisanProfile.js              # skill, skillCategory, portfolio[], certifications[],
+│   │                                  #   pricePerDay, location (2dsphere), isVerified, etc.
+│   ├── SupplierProfile.js             # businessName, description, deliveryStates[], isVerified
+│   ├── Product.js                     # supplierId, name, category, price, stock, isActive
+│   ├── Property.js
+│   ├── Order.js                       # buyerId, items[], status, paymentStatus,
+│   │                                  #   buyerDeliveryApproved, supplierDeliveryApproved,
+│   │                                  #   deliveredAt, escrowEntryId, cancellationReason, cancelledBy
+│   ├── Job.js                         # clientId, artisanId, bookingType, scheduledDate,
+│   │                                  #   dailyRate, dual-approval flags, daysCharged, totalAmount,
+│   │                                  #   workAccepted, workAcceptedAt, workAutoAcceptAt,
+│   │                                  #   escrowEntryId, cancellationReason, cancelledBy
+│   ├── Project.js
+│   ├── Appointment.js
+│   ├── Message.js                     # + Chat.js for conversation metadata
+│   ├── Notification.js
+│   ├── Review.js
+│   ├── Bookmark.js
+│   ├── ContactInquiry.js
+│   ├── BlogPost.js                    # admin CMS — slug, body, status, tags, publishedAt
+│   ├── CareerListing.js               # admin CMS
+│   ├── HelpArticle.js                 # admin CMS — category, emoji, body, order
+│   ├── FeedPost.js                    # admin CMS — mediaType (image/video), mediaUrl, posterUrl
+│   ├── VerificationRequest.js         # kind (business|individual), documents[], status, reviewNote
+│   ├── Dispute.js                     # type (order|job), raisedBy, against, reason, status
+│   ├── PlatformSetting.js             # key/value store + getPaymentConfig() merging defaults
+│   ├── Wallet.js                      # 3-bucket per-seller (or platform) wallet:
+│   │                                  #   pending / holding / available + feesOwed; per-seller
+│   │                                  #   feeMode, customHoldHours, customPayoutReviewHours,
+│   │                                  #   customMinPayoutKobo, withdrawalsPaused, lifetime totals.
+│   │                                  #   Atomic findOrCreate / getPlatform via upsert.
+│   ├── WalletTransaction.js           # Append-only ledger with type, signed amount, bucket, source,
+│   │                                  #   referenceId, availableAt, balanceSnapshot, promotedAt.
+│   ├── EscrowEntry.js                 # One per (entityType, entityId, sellerProfileId).
+│   │                                  #   status: held|released|refunded|partially_refunded.
+│   │                                  #   Unique on (paystackReference, sellerProfileId).
+│   ├── BankAccount.js                 # Paystack recipient_code per seller bank, nameMismatch flag.
+│   ├── PayoutRequest.js               # pending → processing → completed|failed|cancelled.
+│   │                                  #   scheduledFor drives the cooldown cron.
+│   └── CronLock.js                    # Mongo-backed lease + TTL for distributed cron coordination.
 ├── routes/
-│   ├── auth.routes.js          # POST /login, /register, /refresh, /logout, /forgot-password, etc.
-│   ├── profile.routes.js       # GET/PATCH /profiles/me, POST /profiles/me/avatar
-│   ├── artisan.routes.js       # GET /artisans, /artisans/nearby, /artisans/:id, PATCH /onboarding
-│   ├── supplier.routes.js      # GET /suppliers/me, PATCH /suppliers/onboarding
-│   ├── product.routes.js       # CRUD /products
-│   ├── property.routes.js      # CRUD /properties
-│   ├── order.routes.js         # POST /orders, GET /orders, PATCH /orders/:id/status
-│   ├── job.routes.js           # CRUD /jobs, PATCH /jobs/:id/status
-│   ├── project.routes.js       # CRUD /projects
-│   ├── appointment.routes.js   # CRUD /appointments
-│   ├── chat.routes.js          # GET /chat/conversations, /chat/messages, /chat/search, POST /chat/messages
-│   ├── notification.routes.js  # GET /notifications, PATCH /notifications/:id/read, mark-all-read
-│   ├── review.routes.js        # GET/POST /reviews
-│   ├── bookmark.routes.js      # GET/POST/DELETE /bookmarks
-│   ├── dashboard.routes.js     # GET /dashboard/stats, /dashboard/recent-orders
-│   └── contact.routes.js       # POST /contact
-└── utils/
-    ├── AppError.js             # Custom error class (statusCode, message, isOperational)
-    ├── apiResponse.js          # Standardized { status, data, message } response helper
-    ├── asyncHandler.js         # Async route wrapper (catches errors → next())
-    ├── generateTokens.js       # JWT access & refresh token generation
-    └── paginate.js             # Pagination helper ({ page, limit, total, pages })
-├── socket.js                   # Socket.IO — JWT auth, chat events, typing, presence, access control
+│   ├── auth.routes.js
+│   ├── profile.routes.js
+│   ├── artisan.routes.js              # /artisans, /artisans/me, /nearby, /onboarding, /location, etc.
+│   ├── supplier.routes.js
+│   ├── product.routes.js
+│   ├── property.routes.js
+│   ├── order.routes.js                # CRUD + PATCH /:id/status + POST /:id/approve-delivery
+│   ├── job.routes.js                  # CRUD + accept/reject/cancel/approve-start/approve-end + /active
+│   ├── project.routes.js
+│   ├── appointment.routes.js
+│   ├── chat.routes.js
+│   ├── notification.routes.js
+│   ├── review.routes.js
+│   ├── bookmark.routes.js
+│   ├── dashboard.routes.js
+│   ├── payment.routes.js              # Initialize, verify, Paystack webhook (express.raw HMAC)
+│   ├── wallet.routes.js               # GET /wallet/me, /wallet/me/escrow, /wallet/me/transactions
+│   ├── bank.routes.js                 # GET /banks, /banks/resolve, CRUD /bank-accounts
+│   ├── payout.routes.js               # POST /payouts, GET /payouts/me, /payouts/:id
+│   ├── contact.routes.js
+│   ├── blog.routes.js                 # public list + slug
+│   ├── careers.routes.js              # public list + id
+│   ├── help.routes.js                 # public list grouped by category + slug
+│   ├── feed.routes.js                 # merged admin posts + artisan portfolio
+│   ├── verification.routes.js         # POST /upload, POST /, GET /my
+│   ├── dispute.routes.js              # POST /, GET /my
+│   └── admin.routes.js                # stats, page-stats, analytics, users, orders, products,
+│                                      #   blog, careers, help, feed, disputes, verifications, settings,
+│                                      #   escrow, payouts, platform/seller wallets, suspend/unsuspend
+├── socket/
+│   └── index.js                       # JWT auth, chat events, presence, canChat() check
+├── utils/
+│   ├── AppError.js
+│   ├── apiResponse.js                 # sendSuccess, sendPaginated
+│   ├── asyncHandler.js
+│   ├── generateTokens.js
+│   ├── paginate.js
+│   ├── paystack.js                    # initializeTransaction, verifyTransaction, refundCharge,
+│   │                                  #   listBanks, resolveAccount, createTransferRecipient, initiateTransfer
+│   ├── cronLock.js                    # withLock(name, leaseSeconds, fn) — Mongo-backed cron leases
+│   ├── sendEmail.js                   # sendEmail + sendEmailSafe (fire-and-forget)
+│   ├── emitNotification.js            # Socket.IO notification fan-out helper
+│   ├── emailTemplates.js              # Branded HTML for every transactional email
+│   └── resolveUrl.js                  # Convert legacy /uploads/* paths to absolute
+└── scripts/
+    ├── seedAdmin.js
+    ├── seedContent.js
+    ├── seedHelpAndFeed.js
+    └── verifyEmail.js
 ```
 
 ---
 
-## API Overview
+## API Surface (`/api/v1`)
 
-All routes are prefixed with `/api/v1/`.
+### Auth — `/auth`
+Register, login, refresh, logout, `me`, send-verification, verify-email/`:token`, forgot-password, reset-password/`:token`, change-password.
 
-### Authentication
+### Profile — `/profiles`
+GET / PATCH `/me`, POST `/me/avatar`, GET / PATCH `/me/settings`.
 
-| Method | Endpoint                          | Auth | Description                    |
-| ------ | --------------------------------- | ---- | ------------------------------ |
-| POST   | `/auth/register`                  | No   | Create account                 |
-| POST   | `/auth/login`                     | No   | Sign in, returns access token  |
-| POST   | `/auth/refresh`                   | Cookie | Refresh access token          |
-| POST   | `/auth/logout`                    | Yes  | Invalidate refresh token       |
-| GET    | `/auth/me`                        | Yes  | Get current user + profile     |
-| POST   | `/auth/forgot-password`           | No   | Send password reset email      |
-| POST   | `/auth/reset-password/:token`     | No   | Set new password               |
-| POST   | `/auth/change-password`           | Yes  | Change password (returns new token) |
+### Artisans — `/artisans`
+`GET /` (filter `?category`, `?skill`, `?search`, `?page`, `?limit`)
+`GET /nearby` (`?lat&lng&radiusKm`, optional `?city&state` fallback, `?category`, `?skill`)
+`GET /me` (own artisan profile, protected)
+`GET /:id`
+`PATCH /onboarding` (skill, category, portfolio, certs, availability, rates, address, etc.)
+`PATCH /location`
+`POST /portfolio` (multipart, multi-image upload to Cloudinary)
+`POST /certifications` (multipart, single file)
 
-### Profiles
+### Suppliers — `/suppliers`
+`GET /me`, `PATCH /onboarding`, `POST /logo`.
 
-| Method | Endpoint                    | Auth | Description                    |
-| ------ | --------------------------- | ---- | ------------------------------ |
-| GET    | `/profiles/me`              | Yes  | Get own profile                |
-| PATCH  | `/profiles/me`              | Yes  | Update profile fields          |
-| POST   | `/profiles/me/avatar`       | Yes  | Upload avatar (multipart)      |
-| GET    | `/profiles/me/settings`     | Yes  | Get user settings              |
-| PATCH  | `/profiles/me/settings`     | Yes  | Update settings (toggles)      |
+### Products / Properties — `/products`, `/properties`
+CRUD + filters. Restricted to suppliers for write operations.
 
-### Artisans
+### Orders — `/orders`
+- `POST /` — create
+- `GET /` — list (`?as=buyer|seller` overrides role default; `?status` filter)
+- `GET /:id` — detail
+- `PATCH /:id/status` — confirm / ship / cancel (with required reason). **`delivered` is rejected** here — use the dual-approval endpoint.
+- `POST /:id/approve-delivery` — flips the caller's approval flag. Transitions to `delivered` only when **both** `buyerDeliveryApproved` and `supplierDeliveryApproved` are true AND `paymentStatus === 'paid'`. Pay-on-delivery: supplier passes `cashCollected: true` to also flip payment.
 
-| Method | Endpoint                    | Auth | Description                              |
-| ------ | --------------------------- | ---- | ---------------------------------------- |
-| GET    | `/artisans`                 | No   | List artisans (search, category, page)   |
-| GET    | `/artisans/nearby`          | No   | Geo-based artisan search (lat, lng, radius) |
-| GET    | `/artisans/:id`             | No   | Artisan detail with profile              |
-| PATCH  | `/artisans/onboarding`      | Yes  | Update artisan onboarding data           |
-| PATCH  | `/artisans/location`        | Yes  | Update artisan geo location              |
-| POST   | `/artisans/portfolio`       | Yes  | Upload portfolio images (multipart)      |
-| POST   | `/artisans/certifications`  | Yes  | Upload certification file (multipart)    |
+### Jobs — `/jobs`
+- `POST /` — create (`bookingType: 'urgent' | 'scheduled'`, optional `scheduledDate`). Suspended artisans/clients are blocked.
+- `GET /` — list (`?as=artisan|client`, `?status`, `?bookingType`)
+- `GET /active` — in-progress jobs the user is part of (either side), with precomputed `daysRunning` + `costSoFar`
+- `GET /:id`
+- `POST /:id/accept` — artisan accepts pending request
+- `POST /:id/reject` — artisan declines (required reason)
+- `POST /:id/cancel` — either party cancels pending/accepted (required reason)
+- `POST /:id/approve-start` — flip caller's start flag; transitions to `in_progress` when both flip
+- `POST /:id/approve-end` — flip caller's end flag; transitions to `completed` when both flip, computes `daysCharged × dailyRate = totalAmount`
+- `POST /:id/accept-work` — client confirms work meets standard. Atomically claims the held EscrowEntry and releases funds to the artisan's wallet (subject to platform hold period). Once accepted, no dispute can be raised — surfaced clearly in the client modal. Auto-fired by the daily cron after `workAcceptanceDays` if the client never acts.
 
-### Suppliers
+### Wallet — `/wallet`
+- `GET /me` — own wallet snapshot (3 buckets, feesOwed, pause flags, `holdHours`, `isNegative`)
+- `GET /me/escrow` — held EscrowEntry rows for the caller
+- `GET /me/transactions` — paginated WalletTransaction ledger
 
-| Method | Endpoint                    | Auth     | Description                  |
-| ------ | --------------------------- | -------- | ---------------------------- |
-| GET    | `/suppliers/me`             | Supplier | Get own supplier profile     |
-| PATCH  | `/suppliers/onboarding`     | Supplier | Update supplier onboarding   |
-| POST   | `/suppliers/logo`           | Supplier | Upload supplier logo         |
+### Banks / Bank Accounts — `/banks`, `/bank-accounts`
+- `GET /banks` — Paystack NG banks list (24h cache)
+- `GET /banks/resolve?accountNumber=&bankCode=` — server-side name resolution
+- `POST /bank-accounts` — save (creates Paystack `transfer_recipient`, soft KYC name match flags `nameMismatch`, duplicate `(profileId, accountNumber, bankCode)` returns 409)
+- `GET /bank-accounts/me` — list own
+- `DELETE /bank-accounts/:id` — blocked if a pending/processing payout uses this account
 
-### Products
+### Payouts — `/payouts`
+- `POST /` — request payout (atomic conditional debit; rejects if globalPaused, withdrawalsPaused, negative balance, below minPayout, or insufficient available)
+- `GET /me` — own history (with bank details populated)
+- `GET /:id` — own payout detail
 
-| Method | Endpoint            | Auth     | Description              |
-| ------ | ------------------- | -------- | ------------------------ |
-| GET    | `/products`         | No       | List/search products     |
-| GET    | `/products/:id`     | No       | Product detail           |
-| POST   | `/products`         | Supplier | Create product           |
-| PATCH  | `/products/:id`     | Supplier | Update product           |
-| DELETE | `/products/:id`     | Supplier | Delete product           |
+### Verification — `/verification`
+- `POST /upload` — Cloudinary upload, returns `{ fileUrl }` (artisans/suppliers)
+- `POST /` — submit request (`kind`, `businessName`, `documents[]`). Suppliers must include a `cac_certificate`.
+- `GET /my` — list own requests with status + reviewer reasons
 
-### Properties
+### Disputes — `/disputes`
+- `POST /` — raise (`type: 'order'|'job'`, `orderId|jobId`, `reason`); validates user is party to the entity, blocks duplicate open disputes
+- `GET /my`
 
-| Method | Endpoint              | Auth | Description              |
-| ------ | --------------------- | ---- | ------------------------ |
-| GET    | `/properties`         | No   | List/search properties   |
-| GET    | `/properties/:id`     | No   | Property detail          |
-| POST   | `/properties`         | Yes  | Create listing           |
-| PATCH  | `/properties/:id`     | Yes  | Update listing           |
-| DELETE | `/properties/:id`     | Yes  | Delete listing           |
+### Chat — `/chat`
+Conversations, messages by conversation, send (with `canChat` guard — must share a Job or Order, except admin), search by email.
 
-### Orders
+### Notifications — `/notifications`
+List, mark single read, mark all read.
 
-| Method | Endpoint                    | Auth | Description              |
-| ------ | --------------------------- | ---- | ------------------------ |
-| GET    | `/orders`                   | Yes  | List own orders          |
-| POST   | `/orders`                   | Yes  | Create order             |
-| GET    | `/orders/:id`               | Yes  | Order detail             |
-| PATCH  | `/orders/:id/status`        | Yes  | Update order status      |
+### Reviews — `/reviews`, Bookmarks — `/bookmarks`
+Standard CRUD.
 
-### Jobs
+### Payments — `/payments`
+- `POST /initialize` — open a Paystack transaction. Job payments require `status === 'completed'` and use `totalAmount` (legacy `budget` fallback).
+- `GET /verify` — verifies Paystack txn, **asserts charged amount matches expected**, marks paid, and creates the EscrowEntry (idempotent via `(paystackReference, sellerProfileId)` unique index — multi-supplier orders fan out one entry per supplier).
+- `POST /webhook` — Paystack callback. Mounted with `express.raw` so the HMAC signature can be verified against the exact bytes Paystack signed. Handles `charge.success` (escrow create), `transfer.success` (payout completed), `transfer.failed` / `transfer.reversed` (payout failure → wallet credited back via `reversePayout`).
 
-| Method | Endpoint                  | Auth | Description              |
-| ------ | ------------------------- | ---- | ------------------------ |
-| GET    | `/jobs`                   | Yes  | List own jobs            |
-| POST   | `/jobs`                   | Yes  | Create job               |
-| GET    | `/jobs/:id`               | Yes  | Job detail               |
-| PATCH  | `/jobs/:id/status`        | Yes  | Update job status        |
+### Dashboard — `/dashboard`
+Role-specific stats + recent orders.
 
-### Chat
+### Admin — `/admin` (all gated by `protect` + `restrictTo('admin')`)
+- `GET /stats` — 10 grouped metrics: activeUsers, activeArtisans, activeSellers, activeOrders, productsInStock, activeJobs, totalRevenue, pendingVerifications, openDisputes, newUsersThisMonth.
+- `GET /page-stats?page=users|orders|products|jobs|verification|disputes` — per-page metric strips.
+- `GET /analytics` — time-series + role split + top categories/artisans.
+- `GET /users`, `GET /users/:id`, `PATCH /users/:id` (ban/role).
+- `GET /orders`, `GET /products` + `PATCH /products/:id` (visibility toggle).
+- Blog, Careers, Help, Feed: full CRUD.
+- `GET /verifications`, `PATCH /verifications/:id` — approve / reject / **revoke** (reason required for reject and revoke). On revoke, `isVerified: false` is synced back to the seller's profile.
+- `GET /disputes`, `PATCH /disputes/:id` — resolve / dismiss with admin note. `ruleFor: 'buyer'` auto-triggers the refund flow.
+- `GET /settings`, `PATCH /settings`.
 
-| Method | Endpoint                         | Auth | Description                              |
-| ------ | -------------------------------- | ---- | ---------------------------------------- |
-| GET    | `/chat/conversations`            | Yes  | List conversations                       |
-| GET    | `/chat/messages/:conversationId` | Yes  | Messages in a conversation               |
-| POST   | `/chat/messages`                 | Yes  | Send message (requires job/order access) |
-| GET    | `/chat/search?email=`            | Yes  | Search user by email for chat            |
+#### Admin — payments + wallets
+- `GET /escrow` — list escrow entries
+- `POST /escrow/:id/refund` — full or partial refund (Paystack rollback on Paystack failure; required reason)
+- `POST /escrow/:id/release` — force-release an held entry (atomic claim, records `adminOverrideReason` + `adminOverrideBy`)
+- `GET /payouts` — list payouts
+- `POST /payouts/:id/release-now` — skip cooldown for a pending payout
+- `POST /payouts/:id/cancel` — cancel a pending payout, refund the wallet
+- `GET /wallets/platform` — platform fee wallet + recent ledger
+- `GET /wallets/:profileId` — inspect any seller wallet + recent ledger
+- `PATCH /wallets/:profileId` — toggle pause, set feeMode, custom hold/cooldown/min-payout (range-validated)
+- `POST /wallets/:profileId/adjust` — manual ledger entry (whitelisted bucket + non-zero amount + reason)
+- `POST /wallets/:profileId/suspend` — suspend seller (blocks new orders/jobs at controller level, force-pauses payouts, notifies seller)
+- `POST /wallets/:profileId/unsuspend` — reinstate (keeps payouts paused if wallet still negative)
+- `POST /wallets/:profileId/send-fee-reminder` — manual nudge for outstanding feesOwed
+- `POST /settings/global-pause` — emergency global payouts kill switch
 
-### Notifications
+### Public CMS — `/blog`, `/careers`, `/help`, `/feed`
+Read-only public endpoints serving published content for the public website.
 
-| Method | Endpoint                         | Auth | Description              |
-| ------ | -------------------------------- | ---- | ------------------------ |
-| GET    | `/notifications`                 | Yes  | List notifications       |
-| PATCH  | `/notifications/:id/read`        | Yes  | Mark one as read         |
-| PATCH  | `/notifications/mark-all-read`   | Yes  | Mark all as read         |
-
-### Reviews
-
-| Method | Endpoint       | Auth | Description              |
-| ------ | -------------- | ---- | ------------------------ |
-| GET    | `/reviews`     | No   | List reviews (by artisan)|
-| POST   | `/reviews`     | Yes  | Submit a review          |
-
-### Bookmarks
-
-| Method | Endpoint           | Auth | Description              |
-| ------ | ------------------ | ---- | ------------------------ |
-| GET    | `/bookmarks`       | Yes  | List saved items         |
-| POST   | `/bookmarks`       | Yes  | Save an item             |
-| DELETE | `/bookmarks/:id`   | Yes  | Remove bookmark          |
-
-### Dashboard
-
-| Method | Endpoint                      | Auth | Description                    |
-| ------ | ----------------------------- | ---- | ------------------------------ |
-| GET    | `/dashboard/stats`            | Yes  | Role-specific summary stats    |
-| GET    | `/dashboard/recent-orders`    | Yes  | Recent orders for dashboard    |
-
-### Other
-
-| Method | Endpoint     | Auth | Description              |
-| ------ | ------------ | ---- | ------------------------ |
-| POST   | `/contact`   | No   | Submit contact form      |
-| GET    | `/health`    | No   | Server health check      |
+### Health / Contact
+`GET /health`, `POST /contact`.
 
 ---
 
-## Socket.IO Events (Real-Time Chat)
+## Real-Time (Socket.IO)
 
-The server attaches Socket.IO to the HTTP server. Clients authenticate via `auth.token` on connection.
+Authenticated handshake (`auth: { token }`) joins each socket to `user:{userId}`.
 
-| Event (Client → Server)  | Payload                              | Description                        |
-| ------------------------ | ------------------------------------ | ---------------------------------- |
-| `message:send`           | `{ receiverId, content }`            | Send message (returns ack with message or error) |
-| `message:read`           | `{ conversationId }`                 | Mark messages in conversation as read |
-| `typing:start`           | `{ conversationId }`                 | Notify typing started              |
-| `typing:stop`            | `{ conversationId }`                 | Notify typing stopped              |
-| `user:check-online`      | `{ profileIds: string[] }`           | Check online status (returns callback) |
+| Client → Server          | Payload                              | Description                      |
+|--------------------------|--------------------------------------|----------------------------------|
+| `message:send`           | `{ receiverId, content }`            | Returns ack with saved message   |
+| `message:read`           | `{ conversationId }`                 | Mark messages as read            |
+| `typing:start` / `stop`  | `{ conversationId }`                 |                                  |
+| `user:check-online`      | `{ profileIds: string[] }`           | Returns presence map             |
 
-| Event (Server → Client)  | Payload                              | Description                        |
-| ------------------------ | ------------------------------------ | ---------------------------------- |
-| `message:new`            | `ChatMessage`                        | New message received               |
-| `conversation:updated`   | `{ conversationId, lastMessage, participant }` | Conversation list update  |
-| `message:read`           | `{ conversationId }`                 | Read receipt notification          |
-| `typing:start`           | `{ conversationId }`                 | Other user started typing          |
-| `typing:stop`            | `{ conversationId }`                 | Other user stopped typing          |
-| `user:online`            | `{ profileId }`                      | User came online                   |
-| `user:offline`           | `{ profileId }`                      | User went offline                  |
+| Server → Client          | Payload                              | Description                      |
+|--------------------------|--------------------------------------|----------------------------------|
+| `message:new`            | `ChatMessage`                        |                                  |
+| `conversation:updated`   | `{ conversationId, lastMessage }`    |                                  |
+| `message:read`           | `{ conversationId }`                 | Read receipt                     |
+| `typing:start` / `stop`  | `{ conversationId }`                 |                                  |
+| `user:online` / `offline`| `{ profileId }`                      |                                  |
+| `notification:new`       | `Notification`                       | Drives the bell + admin header   |
 
-### Chat Access Control
-
-Users can only message each other if they share a **Job** (client ↔ artisan) or an **Order** (buyer ↔ supplier). The `canChat()` check runs on both the REST endpoint and the Socket.IO `message:send` event.
+Chat **access control**: the `canChat()` check requires participants to share a Job (client ↔ artisan) or Order (buyer ↔ supplier). Admins bypass.
 
 ---
 
-## Authentication Flow
+## Notable Behaviour
 
-1. **Register/Login** — returns JWT access token in response body + sets httpOnly refresh cookie
-2. **Access token** — short-lived (15m default), sent as `Authorization: Bearer <token>`
-3. **Refresh token** — long-lived (7d default), stored as httpOnly cookie, used to get new access token via `POST /auth/refresh`
-4. **Password hashing** — bcryptjs with salt rounds
-5. **Role-based access** — `protect` middleware verifies JWT, `authorize('artisan', 'supplier')` restricts by role
+- **Cross-role views**: `/orders?as=buyer|seller` and `/jobs?as=artisan|client` let any role see whichever side they're acting on.
+- **Verification kinds**: `kind: 'business'` (suppliers — CAC required) vs `kind: 'individual'` (artisans — government ID).
+- **Dual-approval flows**: jobs require both parties to approve start (→ `in_progress`) and end (→ `completed`). Orders require both parties to approve delivery (→ `delivered`), with a payment guard.
+- **Cancellation reasons**: jobs and orders both record the reason and the cancelling side, surfaced to the other party in their dashboard.
+- **Admin notifications**: verification submissions fan-out to every admin in real time.
+- **Defensive geo**: `/artisans/nearby` only includes docs with valid GeoJSON Points and falls back to `?city`/`?state` matching when geo returns nothing.
 
-## File Uploads
+---
 
-- Multer handles multipart form data (disk storage)
-- Sharp resizes images to 400x400 and converts to WebP
-- Files stored in `/{UPLOAD_DIR}/{uuid}.webp`
-- Static file serving via `express.static`
+## Escrow + Payouts Pipeline
 
-## Error Handling
+All amounts are stored in **kobo** (integers). NGN-denominated `Order.totalAmount` / `Job.totalAmount` are converted via `toKobo` at boundaries.
 
-- `AppError` class for operational errors with HTTP status codes
-- `asyncHandler` wraps async routes to forward errors
-- Global `errorHandler` middleware returns consistent `{ status: 'error', message }` responses
-- MongoDB validation errors and duplicate key errors are handled gracefully
+### Buyer pays → escrow held
+1. `POST /payments/initialize` opens a Paystack transaction.
+2. Buyer completes payment on Paystack hosted page.
+3. Either `GET /payments/verify` (browser redirect) or `POST /payments/webhook` (server-to-server) lands first — both are idempotent. Each:
+   - asserts `data.amount === toKobo(expected)` before marking paid;
+   - calls `createEscrowFor` which inserts one `EscrowEntry` per supplier (multi-supplier orders) or one for the artisan (jobs);
+   - calls `creditEscrow` to bump each seller's `pendingBalance`;
+   - sets `Job.workAutoAcceptAt = now + workAcceptanceDays` for jobs.
+4. Unique index on `(paystackReference, sellerProfileId)` makes step 3 race-safe (E11000 from a duplicate insert is swallowed).
+
+### Release condition met → pending → holding
+- **Orders**: dual-approval delivery (`buyerDeliveryApproved && supplierDeliveryApproved && paymentStatus === 'paid'`) transitions to `delivered`, atomically claims each held EscrowEntry, calls `releaseEscrow`. COD orders (no escrow) accrue platform fee to seller's `feesOwed` instead.
+- **Jobs**: client clicks "Accept work", or daily cron auto-accepts after `workAutoAcceptAt`.
+- `releaseEscrow` computes `feeAmount = floor(amount * bps / 10000)` (orderFeeBps or jobFeeBps), debits `pending` by gross, credits `holding` by net, and either credits the platform wallet (per_transaction) or accrues to `feesOwed` (scheduled). `availableAt = now + holdHours`.
+
+### Hold expires → holding → available
+- Hourly cron at `:05` (`expireHoldPeriod`). Aggregation finds `escrow_release` ledger rows past `availableAt` with no paired `hold_expire`. Each candidate is atomically claimed via `promotedAt`, then walked through `applyDelta` to debit `holding` + credit `available`.
+
+### Seller withdraws
+1. `POST /payouts` — atomic conditional `findOneAndUpdate({ availableBalance: { $gte: amount }, withdrawalsPaused: { $ne: true } }, { $inc: { availableBalance: -amount } })`. If null, throws 400.
+2. `PayoutRequest` row created with `status: 'pending'`, `scheduledFor = now + payoutReviewHours`.
+3. Hourly cron at `:15` (`processPayoutCooldown`) atomically claims pending → processing, fires `initiateTransfer` with stable reference `payout_<id>` (so retries don't double-disburse).
+4. `transfer.success` webhook → `status: completed`. `transfer.failed` / `transfer.reversed` → `status: failed`, wallet credited back via `reversePayout`.
+
+### Refunds
+- `issueRefund` (admin endpoint or dispute resolver):
+  - Held entry → just call Paystack refund.
+  - Released entry → `refundFromSeller` first (re-reads wallet per bucket; allows `available` to go negative; force-pauses payouts when negative), THEN Paystack refund. If Paystack call throws, the seller debit is reversed via `reversePayout`.
+
+### Suspension
+- `Profile.isSuspended` blocks new order/job creation at the controller layer.
+- Admin endpoints `suspendSeller` / `unsuspendSeller` set the flag, sync `Wallet.withdrawalsPaused`, and fan out notifications.
+- Public artisan + supplier endpoints expose `isSuspended` so the client UI can show "Currently unavailable" banners and disable hire/order CTAs.
+
+### Cron coordination (multi-instance safe)
+Each `cron.schedule(...)` handler is wrapped in `withLock(name, leaseSeconds, fn)`:
+- Tries `findOneAndUpdate({ name, expiresAt: { $lte: now } }, { $set: { expiresAt: now + lease, ownedBy } }, { upsert: true })`.
+- If we own the upserted doc, run. Otherwise skip — another instance is on it.
+- TTL on `expiresAt` auto-cleans crashed leases.
+
+### Idempotency + atomicity guards
+| Concern                              | Guard                                                                        |
+|--------------------------------------|------------------------------------------------------------------------------|
+| Verify + webhook racing              | `(paystackReference, sellerProfileId)` unique index on EscrowEntry           |
+| Double-release on parallel acceptWork | Atomic `EscrowEntry.findOneAndUpdate({ status: 'held' }, { status: 'released' })` |
+| Two payouts draining wallet          | Atomic conditional `Wallet.findOneAndUpdate({ availableBalance: { $gte } })` |
+| Cron firing in two instances         | `withLock` — Mongo CronLock with TTL                                         |
+| Hold-expire cron racing itself       | Atomic `WalletTransaction.findOneAndUpdate({ promotedAt: { $exists: false } })` |
+| Paystack transfer retried with new ref | Stable `payout_<id>` reference                                              |
+| Webhook signature on parsed JSON     | `express.raw` keeps the raw buffer for HMAC                                  |
+| Refund debited but Paystack failed   | `refundFromSeller` rollback in catch                                         |
+| Platform wallet duplicates on boot   | Unique partial index on `isPlatform: true` + upsert `getPlatform`            |
+| Typo'd bucket name silently mutating | Bucket whitelist in `applyDelta`                                             |
 
 ---
 
 ## Scripts
 
-| Command         | Description                    |
-| --------------- | ------------------------------ |
-| `npm run dev`   | Start with nodemon (hot reload)|
-| `npm start`     | Start production server        |
-| `npm run lint`  | Run ESLint                     |
+| Command         | Description                  |
+|-----------------|------------------------------|
+| `npm run dev`   | Nodemon (hot reload)         |
+| `npm start`     | Production                   |
+| `npm run lint`  | ESLint (when configured)     |
