@@ -71,6 +71,12 @@ export const createJob = asyncHandler(async (req, res) => {
     city,
   } = req.body;
 
+  // Self-hire guard. The reviewer/dispute paths can't structurally target self,
+  // but createJob takes artisanId from the body so we explicitly block here.
+  if (artisanId.toString() === clientProfile._id.toString()) {
+    throw new AppError('You cannot hire yourself.', 400);
+  }
+
   // Verify artisan and snapshot their daily rate
   const artisanProfile = await Profile.findById(artisanId).select('userId fullName isSuspended');
   if (!artisanProfile) throw new AppError('Artisan not found.', 404);

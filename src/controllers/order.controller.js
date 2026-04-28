@@ -51,8 +51,15 @@ export const create = asyncHandler(async (req, res) => {
     throw new AppError('One or more products are unavailable or not found.', 400);
   }
 
-  // Block orders containing items from suspended suppliers.
+  // Self-order guard. A buyer can't order any product from themselves —
+  // catches the case where a supplier (whose buyer profile is the same
+  // Profile row) tries to checkout their own listing.
   const supplierIds = [...new Set(products.map((p) => p.supplierId.toString()))];
+  if (supplierIds.includes(buyerProfile._id.toString())) {
+    throw new AppError('You cannot order your own products.', 400);
+  }
+
+  // Block orders containing items from suspended suppliers.
   const suspendedSuppliers = await Profile.find({
     _id: { $in: supplierIds },
     isSuspended: true,

@@ -2,6 +2,8 @@ import asyncHandler from '../utils/asyncHandler.js';
 import AppError from '../utils/AppError.js';
 import Bookmark from '../models/Bookmark.js';
 import Profile from '../models/Profile.js';
+import Product from '../models/Product.js';
+import Property from '../models/Property.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import { resolveUploadUrl } from '../utils/resolveUrl.js';
 
@@ -23,6 +25,24 @@ export const toggleBookmark = asyncHandler(async (req, res) => {
 
   if (!entityId || !entityType) {
     throw new AppError('entityId and type (artisan/product/property) are required.', 400);
+  }
+
+  // Self-bookmark guard — saving your own profile / product / property is
+  // pointless and clutters the dashboard. Block it explicitly.
+  if (entityType === 'Profile' && entityId.toString() === profile._id.toString()) {
+    throw new AppError('You cannot save your own profile.', 400);
+  }
+  if (entityType === 'Product') {
+    const product = await Product.findById(entityId).select('supplierId');
+    if (product && product.supplierId.toString() === profile._id.toString()) {
+      throw new AppError('You cannot save your own product.', 400);
+    }
+  }
+  if (entityType === 'Property') {
+    const property = await Property.findById(entityId).select('supplierId');
+    if (property && property.supplierId.toString() === profile._id.toString()) {
+      throw new AppError('You cannot save your own property.', 400);
+    }
   }
 
   const existing = await Bookmark.findOne({ userId: profile._id, entityId, entityType });
