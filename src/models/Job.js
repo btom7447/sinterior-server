@@ -78,24 +78,6 @@ const jobSchema = new mongoose.Schema(
       default: 'pending',
     },
 
-    // Which pricing model applies for this job. Snapshotted at hire time.
-    pricingMode: {
-      type: String,
-      enum: ['daily', 'hourly', 'flat', 'sqm', 'unit'],
-      default: 'daily',
-    },
-
-    // ── Pricing snapshot at hire time ──────────────────────────────────────────
-    // Rates snapshotted so later profile changes can't retroactively alter cost.
-    dailyRate: {
-      type: Number,
-      min: 0,
-    },
-    hourlyRate: {
-      type: Number,
-      min: 0,
-    },
-
     // ── Dual-approval flags for start (in_progress) and end (completed) ─────
     clientStartApproved: { type: Boolean, default: false },
     artisanStartApproved: { type: Boolean, default: false },
@@ -107,11 +89,7 @@ const jobSchema = new mongoose.Schema(
     startedAt: { type: Date },
     endedAt: { type: Date },
 
-    // Computed at completion (daily mode): ceil((endedAt - startedAt) / 1 day), min 1.
-    daysCharged: { type: Number, min: 0 },
-    // Computed at completion (hourly mode): ceil((endedAt - startedAt) / 1 hour), min 1.
-    hoursCharged: { type: Number, min: 0 },
-    // For quote modes: locked when client accepts the quote. For time modes: computed at end.
+    // Locked when client accepts the artisan's quote.
     totalAmount: { type: Number, min: 0 },
 
     // Active quote for quote-based jobs. Points to the latest sent/accepted Quote.

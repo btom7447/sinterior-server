@@ -22,10 +22,6 @@ export const validateJob = [
   body('title').optional().trim().isLength({ max: 200 }),
   body('description').optional().trim().isLength({ max: 2000 }),
   body('bookingType').isIn(['urgent', 'scheduled']).withMessage('bookingType must be urgent or scheduled'),
-  body('pricingMode')
-    .optional()
-    .isIn(['daily', 'hourly', 'flat', 'sqm', 'unit'])
-    .withMessage('pricingMode must be one of: daily, hourly, flat, sqm, unit'),
   body('scheduledDate')
     .if(body('bookingType').equals('scheduled'))
     .notEmpty()
@@ -36,24 +32,6 @@ export const validateJob = [
   body('city').optional().trim().isLength({ max: 80 }),
   validate,
 ];
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-const computeDaysCharged = (startedAt, endedAt) => {
-  if (!startedAt || !endedAt) return 1;
-  const ms = new Date(endedAt) - new Date(startedAt);
-  if (ms <= 0) return 1;
-  return Math.max(1, Math.ceil(ms / (1000 * 60 * 60 * 24)));
-};
-
-const computeHoursCharged = (startedAt, endedAt) => {
-  if (!startedAt || !endedAt) return 1;
-  const ms = new Date(endedAt) - new Date(startedAt);
-  if (ms <= 0) return 1;
-  return Math.max(1, Math.ceil(ms / (1000 * 60 * 60)));
-};
-
-const QUOTE_MODES = new Set(['flat', 'sqm', 'unit']);
 
 const notifyParty = async ({ req, recipientUserId, title, body, type, data }) => {
   try {
@@ -75,14 +53,11 @@ export const createJob = asyncHandler(async (req, res) => {
     title,
     description,
     bookingType,
-    pricingMode: rawMode,
     scheduledDate,
     location,
     state,
     city,
   } = req.body;
-
-  const pricingMode = rawMode || 'daily';
 
   if (artisanId.toString() === clientProfile._id.toString()) {
     throw new AppError('You cannot hire yourself.', 400);
@@ -97,20 +72,6 @@ export const createJob = asyncHandler(async (req, res) => {
     throw new AppError('Your account is suspended. Contact admin to reinstate.', 403);
   }
 
-  const artisanDoc = await ArtisanProfile.findOne({ profileId: artisanId })
-    .select('pricePerDay pricePerHour pricingModes');
-
-  // Snapshot rate for time-based modes; quote modes need no rate upfront.
-  let dailyRate;
-  let hourlyRate;
-  if (pricingMode === 'daily') {
-    dailyRate = artisanDoc?.pricePerDay ?? 0;
-    if (!dailyRate) throw new AppError('This artisan has not set their daily rate yet.', 400);
-  } else if (pricingMode === 'hourly') {
-    hourlyRate = artisanDoc?.pricePerHour ?? 0;
-    if (!hourlyRate) throw new AppError('This artisan has not set their hourly rate yet.', 400);
-  }
-
   const finalTitle =
     (title && title.trim()) ||
     `Job request from ${clientProfile.fullName || 'client'}`;
@@ -120,15 +81,12 @@ export const createJob = asyncHandler(async (req, res) => {
     artisanId,
     title: finalTitle,
     description,
-    pricingMode,
     bookingType,
     scheduledDate: bookingType === 'scheduled' ? scheduledDate : undefined,
     appointmentDate: bookingType === 'scheduled' ? scheduledDate : undefined,
     location,
     state,
     city,
-    dailyRate,
-    hourlyRate,
   });
 
   await notifyParty({
@@ -219,26 +177,18 @@ export const getActiveJobs = asyncHandler(async (req, res) => {
   const enriched = jobs.map((j) => {
     const startedMs = j.startedAt ? new Date(j.startedAt).getTime() : now;
     const elapsedMs = Math.max(0, now - startedMs);
-    // Days are ceil() so day 1 starts the moment the job goes in_progress.
     const daysRunning = Math.max(1, Math.ceil(elapsedMs / (1000 * 60 * 60 * 24)));
     const role = j.artisanId._id.toString() === profile._id.toString() ? 'artisan' : 'client';
-    const isHourly = j.pricingMode === 'hourly';
-    const hoursRunning = Math.max(1, Math.ceil(elapsedMs / (1000 * 60 * 60)));
-    const rate = isHourly ? (j.hourlyRate || 0) : (j.dailyRate || 0);
-    const unitsRunning = isHourly ? hoursRunning : daysRunning;
     return {
       _id: j._id,
       title: j.title,
-      pricingMode: j.pricingMode || 'daily',
       bookingType: j.bookingType,
       role,
       counterparty: role === 'artisan' ? j.clientId : j.artisanId,
       startedAt: j.startedAt,
-      dailyRate: j.dailyRate || 0,
-      hourlyRate: j.hourlyRate || 0,
       daysRunning,
-      hoursRunning,
-      costSoFar: QUOTE_MODES.has(j.pricingMode) ? (j.totalAmount || 0) : rate * unitsRunning,
+      // totalAmount is locked from accepted quote
+      costSoFar: j.totalAmount || 0,
     };
   });
 
@@ -473,7 +423,7 @@ export const approveStart = asyncHandler(async (req, res) => {
 });
 
 // POST /api/v1/jobs/:id/approve-end — same as approve-start but for completion.
-// On both-approved, computes daysCharged and totalAmount.
+// totalAmount is already locked from the accepted quote — no recompute needed.
 export const approveEnd = asyncHandler(async (req, res) => {
   const { job, isClient } = await loadJobAndAuth(req);
   if (job.status !== 'in_progress') {
@@ -496,16 +446,7 @@ export const approveEnd = asyncHandler(async (req, res) => {
   if (job.clientEndApproved && job.artisanEndApproved) {
     job.status = 'completed';
     job.endedAt = new Date();
-    if (job.pricingMode === 'hourly') {
-      job.hoursCharged = computeHoursCharged(job.startedAt, job.endedAt);
-      job.totalAmount = job.hoursCharged * (job.hourlyRate || 0);
-    } else if (QUOTE_MODES.has(job.pricingMode)) {
-      // totalAmount already locked when client accepted the quote — no recompute.
-    } else {
-      // daily (default)
-      job.daysCharged = computeDaysCharged(job.startedAt, job.endedAt);
-      job.totalAmount = job.daysCharged * (job.dailyRate || 0);
-    }
+    // totalAmount was locked when client accepted the quote — nothing to recompute.
     transitioned = true;
   }
 
@@ -513,16 +454,12 @@ export const approveEnd = asyncHandler(async (req, res) => {
 
   const otherUserId = isClient ? job.artisanId.userId : job.clientId.userId;
   if (transitioned) {
+    const total = `₦${(job.totalAmount || 0).toLocaleString('en-NG')}`;
     await notifyParty({
       req,
       recipientUserId: otherUserId,
       title: 'Job completed',
-      body: (() => {
-        const total = `₦${(job.totalAmount || 0).toLocaleString('en-NG')}`;
-        if (job.pricingMode === 'hourly') return `Both parties confirmed completion of "${job.title}". Total: ${total} (${job.hoursCharged} hr${job.hoursCharged === 1 ? '' : 's'}).`;
-        if (QUOTE_MODES.has(job.pricingMode)) return `Both parties confirmed completion of "${job.title}". Total: ${total} (quoted price).`;
-        return `Both parties confirmed completion of "${job.title}". Total: ${total} (${job.daysCharged} day${job.daysCharged === 1 ? '' : 's'}).`;
-      })(),
+      body: `Both parties confirmed completion of "${job.title}". Total: ${total}.`,
       type: 'job',
       data: { jobId: job._id, status: 'completed' },
     });

@@ -60,19 +60,10 @@ const artisanProfileSchema = new mongoose.Schema(
     city: { type: String, trim: true, maxlength: 80 },
     state: { type: String, trim: true, maxlength: 80 },
     address: { type: String, trim: true, maxlength: 200 },
-    pricingModes: {
-      type: [String],
-      enum: ['daily', 'hourly', 'flat', 'sqm', 'unit'],
-      default: [],
-    },
-    pricePerDay: {
-      type: Number,
-      min: [0, 'Price per day cannot be negative'],
-    },
-    pricePerHour: {
-      type: Number,
-      min: [0, 'Price per hour cannot be negative'],
-    },
+    // Business identity shown on quotes
+    businessName:    { type: String, trim: true, maxlength: 100 },
+    businessTagline: { type: String, trim: true, maxlength: 200 },
+
     experienceYears: {
       type: Number,
       min: [0, 'Experience years cannot be negative'],

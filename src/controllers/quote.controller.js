@@ -3,6 +3,7 @@ import AppError from '../utils/AppError.js';
 import Quote from '../models/Quote.js';
 import Job from '../models/Job.js';
 import Profile from '../models/Profile.js';
+import ArtisanProfile from '../models/ArtisanProfile.js';
 import Notification from '../models/Notification.js';
 import { emitNotification } from '../utils/emitNotification.js';
 
@@ -15,22 +16,30 @@ const notifyParty = async ({ req, recipientUserId, title, body, type, data }) =>
   }
 };
 
-const computeTotals = (labourCost, materials) => {
+const computeTotals = (labourType, labourRate, labourQty, materials) => {
+  const rate = Number(labourRate) || 0;
+  const qty  = labourType === 'flat' ? 1 : (Number(labourQty) || 1);
+  const labourCost = Number((rate * qty).toFixed(2));
+
   const rows = (materials || []).map((m) => ({
     ...m,
     lineTotal: Number((m.qty * m.unitPrice).toFixed(2)),
   }));
   const materialTotal = rows.reduce((sum, r) => sum + r.lineTotal, 0);
-  const total = labourCost + materialTotal;
-  return { rows, materialTotal, total };
+  const total = Number((labourCost + materialTotal).toFixed(2));
+  return { labourCost, rows, materialTotal, total };
 };
 
-// POST /api/v1/quotes — artisan sends a new quote
+// POST /api/v1/quotes — artisan sends a new quote for any job in pending/accepted status
 export const sendQuote = asyncHandler(async (req, res) => {
   const profile = await Profile.findOne({ userId: req.user.id });
   if (!profile) throw new AppError('Profile not found.', 404);
 
-  const { jobId, pricingMode, labourCost, materials, notes } = req.body;
+  const { jobId, labourType, labourRate, labourQty, materials, notes } = req.body;
+
+  if (!['flat', 'hourly', 'daily', 'sqm', 'unit'].includes(labourType)) {
+    throw new AppError('labourType must be flat, hourly, daily, sqm, or unit.', 400);
+  }
 
   const job = await Job.findById(jobId)
     .populate('clientId', 'userId fullName')
@@ -39,14 +48,16 @@ export const sendQuote = asyncHandler(async (req, res) => {
   if (job.artisanId._id.toString() !== profile._id.toString()) {
     throw new AppError('Not authorised to quote on this job.', 403);
   }
-  if (job.status !== 'accepted') {
-    throw new AppError('Artisan must accept the job request before sending a quote.', 400);
-  }
-  if (!['flat', 'sqm', 'unit'].includes(pricingMode)) {
-    throw new AppError('pricingMode must be flat, sqm, or unit for quotes.', 400);
+  if (!['pending', 'accepted', 'quote_pending'].includes(job.status)) {
+    throw new AppError(`Cannot quote a job in status "${job.status}".`, 400);
   }
 
-  const { rows, materialTotal, total } = computeTotals(Number(labourCost) || 0, materials);
+  const { labourCost, rows, materialTotal, total } = computeTotals(labourType, labourRate, labourQty, materials);
+
+  // Snapshot artisan's business identity at send time.
+  const artisanDoc = await ArtisanProfile.findOne({ profileId: profile._id })
+    .select('businessName businessTagline')
+    .lean();
 
   // Mark any existing sent quote as superseded.
   const prevVersion = await Quote.findOne({ jobId, status: 'sent' }).sort({ version: -1 });
@@ -60,8 +71,15 @@ export const sendQuote = asyncHandler(async (req, res) => {
     jobId,
     artisanId: profile._id,
     clientId: job.clientId._id,
-    pricingMode,
-    labourCost: Number(labourCost) || 0,
+    artisanBusiness: {
+      name:    artisanDoc?.businessName    || profile.fullName,
+      tagline: artisanDoc?.businessTagline || '',
+      logoUrl: profile.avatarUrl           || '',
+    },
+    labourType,
+    labourRate: Number(labourRate) || 0,
+    labourQty:  labourType === 'flat' ? 1 : (Number(labourQty) || 1),
+    labourCost,
     materials: rows,
     materialTotal,
     total,
@@ -70,7 +88,6 @@ export const sendQuote = asyncHandler(async (req, res) => {
     version,
   });
 
-  // Point job to the latest quote.
   job.quoteId = quote._id;
   job.status = 'quote_pending';
   await job.save();
@@ -101,11 +118,15 @@ export const editQuote = asyncHandler(async (req, res) => {
     throw new AppError('Only a sent quote can be edited.', 400);
   }
 
-  const { labourCost, materials, notes, pricingMode } = req.body;
+  const { labourType, labourRate, labourQty, materials, notes } = req.body;
 
-  const { rows, materialTotal, total } = computeTotals(
-    labourCost !== undefined ? Number(labourCost) : quote.labourCost,
-    materials !== undefined ? materials : quote.materials
+  const newLabourType = labourType || quote.labourType;
+  const newLabourRate = labourRate !== undefined ? Number(labourRate) : quote.labourRate;
+  const newLabourQty  = labourQty  !== undefined ? Number(labourQty)  : quote.labourQty;
+  const newMaterials  = materials  !== undefined ? materials          : quote.materials;
+
+  const { labourCost, rows, materialTotal, total } = computeTotals(
+    newLabourType, newLabourRate, newLabourQty, newMaterials
   );
 
   // Supersede current, create next version.
@@ -117,16 +138,19 @@ export const editQuote = asyncHandler(async (req, res) => {
     .populate('artisanId', 'userId');
 
   const newQuote = await Quote.create({
-    jobId: quote.jobId,
-    artisanId: quote.artisanId,
-    clientId: quote.clientId,
-    pricingMode: pricingMode || quote.pricingMode,
-    labourCost: labourCost !== undefined ? Number(labourCost) : quote.labourCost,
-    materials: rows,
+    jobId:           quote.jobId,
+    artisanId:       quote.artisanId,
+    clientId:        quote.clientId,
+    artisanBusiness: quote.artisanBusiness,
+    labourType:      newLabourType,
+    labourRate:      newLabourRate,
+    labourQty:       newLabourType === 'flat' ? 1 : newLabourQty,
+    labourCost,
+    materials:       rows,
     materialTotal,
     total,
     notes: notes !== undefined ? notes?.trim() : quote.notes,
-    status: 'sent',
+    status:  'sent',
     version: quote.version + 1,
   });
 
