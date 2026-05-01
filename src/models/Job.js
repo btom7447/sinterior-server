@@ -66,9 +66,10 @@ const jobSchema = new mongoose.Schema(
     // in_progress — both parties confirmed start; daily billing clock running
     // completed   — both parties confirmed end; payment computed
     // cancelled   — rejected or aborted at any earlier point
+    // quote_pending: artisan accepted job, sent quote, client reviewing
     status: {
       type: String,
-      enum: ['pending', 'accepted', 'in_progress', 'completed', 'cancelled'],
+      enum: ['pending', 'quote_pending', 'accepted', 'in_progress', 'completed', 'cancelled'],
       default: 'pending',
     },
     paymentStatus: {
@@ -77,10 +78,20 @@ const jobSchema = new mongoose.Schema(
       default: 'pending',
     },
 
+    // Which pricing model applies for this job. Snapshotted at hire time.
+    pricingMode: {
+      type: String,
+      enum: ['daily', 'hourly', 'flat', 'sqm', 'unit'],
+      default: 'daily',
+    },
+
     // ── Pricing snapshot at hire time ──────────────────────────────────────────
-    // We snapshot the artisan's daily rate when the job is created so a later
-    // rate change doesn't retroactively bump an in-progress contract.
+    // Rates snapshotted so later profile changes can't retroactively alter cost.
     dailyRate: {
+      type: Number,
+      min: 0,
+    },
+    hourlyRate: {
       type: Number,
       min: 0,
     },
@@ -96,9 +107,18 @@ const jobSchema = new mongoose.Schema(
     startedAt: { type: Date },
     endedAt: { type: Date },
 
-    // Computed at completion: ceil((endedAt - startedAt) / 1 day), min 1.
+    // Computed at completion (daily mode): ceil((endedAt - startedAt) / 1 day), min 1.
     daysCharged: { type: Number, min: 0 },
+    // Computed at completion (hourly mode): ceil((endedAt - startedAt) / 1 hour), min 1.
+    hoursCharged: { type: Number, min: 0 },
+    // For quote modes: locked when client accepts the quote. For time modes: computed at end.
     totalAmount: { type: Number, min: 0 },
+
+    // Active quote for quote-based jobs. Points to the latest sent/accepted Quote.
+    quoteId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Quote',
+    },
 
     // Legacy compatibility — older rows used these; new rows use startedAt/endedAt.
     startDate: Date,

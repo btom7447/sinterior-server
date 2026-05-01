@@ -215,7 +215,9 @@ export const updateOnboarding = asyncHandler(async (req, res) => {
     'city',
     'state',
     'address',
+    'pricingModes',
     'pricePerDay',
+    'pricePerHour',
     'experienceYears',
     'isAvailable',
     'portfolio',
@@ -236,6 +238,17 @@ export const updateOnboarding = asyncHandler(async (req, res) => {
 
   if (Object.keys(updates).length === 0) {
     throw new AppError('No valid fields provided for update.', 400);
+  }
+
+  // Validate that required rates are set when a time-based mode is selected.
+  const modes = updates.pricingModes ?? [];
+  if (modes.includes('daily') && !updates.pricePerDay) {
+    const existing = await ArtisanProfile.findOne({ profileId: (await Profile.findOne({ userId: req.user.id }))._id }).select('pricePerDay');
+    if (!existing?.pricePerDay) throw new AppError('pricePerDay is required when daily mode is selected.', 400);
+  }
+  if (modes.includes('hourly') && !updates.pricePerHour) {
+    const existing = await ArtisanProfile.findOne({ profileId: (await Profile.findOne({ userId: req.user.id }))._id }).select('pricePerHour');
+    if (!existing?.pricePerHour) throw new AppError('pricePerHour is required when hourly mode is selected.', 400);
   }
 
   const artisan = await ArtisanProfile.findOneAndUpdate(

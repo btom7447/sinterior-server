@@ -19,12 +19,13 @@ import { jobCreatedArtisan, jobStatusChanged, appointmentBooked } from '../utils
 
 export const validateJob = [
   body('artisanId').isMongoId().withMessage('Valid artisan ID required'),
-  // Title is now optional from the new lean hire form. The controller
-  // synthesises a default ("Job request from <client>") when omitted, so
-  // the artisan still has something readable to see.
   body('title').optional().trim().isLength({ max: 200 }),
   body('description').optional().trim().isLength({ max: 2000 }),
   body('bookingType').isIn(['urgent', 'scheduled']).withMessage('bookingType must be urgent or scheduled'),
+  body('pricingMode')
+    .optional()
+    .isIn(['daily', 'hourly', 'flat', 'sqm', 'unit'])
+    .withMessage('pricingMode must be one of: daily, hourly, flat, sqm, unit'),
   body('scheduledDate')
     .if(body('bookingType').equals('scheduled'))
     .notEmpty()
@@ -44,6 +45,15 @@ const computeDaysCharged = (startedAt, endedAt) => {
   if (ms <= 0) return 1;
   return Math.max(1, Math.ceil(ms / (1000 * 60 * 60 * 24)));
 };
+
+const computeHoursCharged = (startedAt, endedAt) => {
+  if (!startedAt || !endedAt) return 1;
+  const ms = new Date(endedAt) - new Date(startedAt);
+  if (ms <= 0) return 1;
+  return Math.max(1, Math.ceil(ms / (1000 * 60 * 60)));
+};
+
+const QUOTE_MODES = new Set(['flat', 'sqm', 'unit']);
 
 const notifyParty = async ({ req, recipientUserId, title, body, type, data }) => {
   try {
@@ -65,19 +75,19 @@ export const createJob = asyncHandler(async (req, res) => {
     title,
     description,
     bookingType,
+    pricingMode: rawMode,
     scheduledDate,
     location,
     state,
     city,
   } = req.body;
 
-  // Self-hire guard. The reviewer/dispute paths can't structurally target self,
-  // but createJob takes artisanId from the body so we explicitly block here.
+  const pricingMode = rawMode || 'daily';
+
   if (artisanId.toString() === clientProfile._id.toString()) {
     throw new AppError('You cannot hire yourself.', 400);
   }
 
-  // Verify artisan and snapshot their daily rate
   const artisanProfile = await Profile.findById(artisanId).select('userId fullName isSuspended');
   if (!artisanProfile) throw new AppError('Artisan not found.', 404);
   if (artisanProfile.isSuspended) {
@@ -87,13 +97,20 @@ export const createJob = asyncHandler(async (req, res) => {
     throw new AppError('Your account is suspended. Contact admin to reinstate.', 403);
   }
 
-  const artisanDoc = await ArtisanProfile.findOne({ profileId: artisanId }).select('pricePerDay');
-  const dailyRate = artisanDoc?.pricePerDay ?? 0;
-  if (!dailyRate) {
-    throw new AppError('This artisan has not set their daily rate yet.', 400);
+  const artisanDoc = await ArtisanProfile.findOne({ profileId: artisanId })
+    .select('pricePerDay pricePerHour pricingModes');
+
+  // Snapshot rate for time-based modes; quote modes need no rate upfront.
+  let dailyRate;
+  let hourlyRate;
+  if (pricingMode === 'daily') {
+    dailyRate = artisanDoc?.pricePerDay ?? 0;
+    if (!dailyRate) throw new AppError('This artisan has not set their daily rate yet.', 400);
+  } else if (pricingMode === 'hourly') {
+    hourlyRate = artisanDoc?.pricePerHour ?? 0;
+    if (!hourlyRate) throw new AppError('This artisan has not set their hourly rate yet.', 400);
   }
 
-  // Default title when client doesn't supply one (the new lean hire card omits it).
   const finalTitle =
     (title && title.trim()) ||
     `Job request from ${clientProfile.fullName || 'client'}`;
@@ -103,6 +120,7 @@ export const createJob = asyncHandler(async (req, res) => {
     artisanId,
     title: finalTitle,
     description,
+    pricingMode,
     bookingType,
     scheduledDate: bookingType === 'scheduled' ? scheduledDate : undefined,
     appointmentDate: bookingType === 'scheduled' ? scheduledDate : undefined,
@@ -110,6 +128,7 @@ export const createJob = asyncHandler(async (req, res) => {
     state,
     city,
     dailyRate,
+    hourlyRate,
   });
 
   await notifyParty({
@@ -203,16 +222,23 @@ export const getActiveJobs = asyncHandler(async (req, res) => {
     // Days are ceil() so day 1 starts the moment the job goes in_progress.
     const daysRunning = Math.max(1, Math.ceil(elapsedMs / (1000 * 60 * 60 * 24)));
     const role = j.artisanId._id.toString() === profile._id.toString() ? 'artisan' : 'client';
+    const isHourly = j.pricingMode === 'hourly';
+    const hoursRunning = Math.max(1, Math.ceil(elapsedMs / (1000 * 60 * 60)));
+    const rate = isHourly ? (j.hourlyRate || 0) : (j.dailyRate || 0);
+    const unitsRunning = isHourly ? hoursRunning : daysRunning;
     return {
       _id: j._id,
       title: j.title,
+      pricingMode: j.pricingMode || 'daily',
       bookingType: j.bookingType,
-      role, // perspective — am I the artisan or the client on this job?
+      role,
       counterparty: role === 'artisan' ? j.clientId : j.artisanId,
       startedAt: j.startedAt,
       dailyRate: j.dailyRate || 0,
+      hourlyRate: j.hourlyRate || 0,
       daysRunning,
-      costSoFar: (j.dailyRate || 0) * daysRunning,
+      hoursRunning,
+      costSoFar: QUOTE_MODES.has(j.pricingMode) ? (j.totalAmount || 0) : rate * unitsRunning,
     };
   });
 
@@ -470,8 +496,16 @@ export const approveEnd = asyncHandler(async (req, res) => {
   if (job.clientEndApproved && job.artisanEndApproved) {
     job.status = 'completed';
     job.endedAt = new Date();
-    job.daysCharged = computeDaysCharged(job.startedAt, job.endedAt);
-    job.totalAmount = job.daysCharged * (job.dailyRate || 0);
+    if (job.pricingMode === 'hourly') {
+      job.hoursCharged = computeHoursCharged(job.startedAt, job.endedAt);
+      job.totalAmount = job.hoursCharged * (job.hourlyRate || 0);
+    } else if (QUOTE_MODES.has(job.pricingMode)) {
+      // totalAmount already locked when client accepted the quote — no recompute.
+    } else {
+      // daily (default)
+      job.daysCharged = computeDaysCharged(job.startedAt, job.endedAt);
+      job.totalAmount = job.daysCharged * (job.dailyRate || 0);
+    }
     transitioned = true;
   }
 
@@ -483,7 +517,12 @@ export const approveEnd = asyncHandler(async (req, res) => {
       req,
       recipientUserId: otherUserId,
       title: 'Job completed',
-      body: `Both parties confirmed completion of "${job.title}". Total: ₦${(job.totalAmount || 0).toLocaleString('en-NG')} (${job.daysCharged} day${job.daysCharged === 1 ? '' : 's'}).`,
+      body: (() => {
+        const total = `₦${(job.totalAmount || 0).toLocaleString('en-NG')}`;
+        if (job.pricingMode === 'hourly') return `Both parties confirmed completion of "${job.title}". Total: ${total} (${job.hoursCharged} hr${job.hoursCharged === 1 ? '' : 's'}).`;
+        if (QUOTE_MODES.has(job.pricingMode)) return `Both parties confirmed completion of "${job.title}". Total: ${total} (quoted price).`;
+        return `Both parties confirmed completion of "${job.title}". Total: ${total} (${job.daysCharged} day${job.daysCharged === 1 ? '' : 's'}).`;
+      })(),
       type: 'job',
       data: { jobId: job._id, status: 'completed' },
     });
