@@ -159,13 +159,12 @@ export const initialize = asyncHandler(async (req, res) => {
     if (job.clientId.toString() !== profile._id.toString()) {
       throw new AppError('Not authorised.', 403);
     }
-    if (job.status !== 'completed') {
-      throw new AppError('Job must be completed before payment.', 400);
+    if (!['accepted', 'in_progress', 'completed'].includes(job.status)) {
+      throw new AppError('Job must be accepted before payment.', 400);
     }
     if (job.paymentStatus === 'paid') {
       throw new AppError('Job is already paid.', 400);
     }
-    // Prefer the daily-rate-computed totalAmount; fall back to legacy budget for old rows.
     amount = job.totalAmount && job.totalAmount > 0 ? job.totalAmount : job.budget;
     if (!amount || amount <= 0) {
       throw new AppError('Job has no payable amount.', 400);

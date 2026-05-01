@@ -237,75 +237,8 @@ const loadJobAndAuth = async (req, expectedRole) => {
   return { job, profile, isClient, isArtisan };
 };
 
-// POST /api/v1/jobs/:id/accept — artisan accepts a pending job request
-export const acceptJob = asyncHandler(async (req, res) => {
-  const { job } = await loadJobAndAuth(req, 'artisan');
-  if (job.status !== 'pending') {
-    throw new AppError(`Cannot accept a job in status "${job.status}".`, 400);
-  }
-
-  job.status = 'accepted';
-  await job.save();
-
-  // For scheduled bookings, mirror onto Appointment so the client/artisan
-  // calendar surfaces it.
-  if (job.bookingType === 'scheduled' && job.scheduledDate) {
-    const locationStr = [job.city, job.state].filter(Boolean).join(', ') || job.location || '';
-    const appointment = await Appointment.create({
-      clientId: job.clientId._id,
-      artisanId: job.artisanId._id,
-      jobId: job._id,
-      title: job.title,
-      description: job.description,
-      date: job.scheduledDate,
-      location: locationStr,
-    });
-
-    const [clientUser, artisanUser] = await Promise.all([
-      User.findById(job.clientId.userId).select('email'),
-      User.findById(job.artisanId.userId).select('email'),
-    ]);
-    if (clientUser?.email) {
-      const { subject, html } = appointmentBooked({
-        appointment,
-        recipientRole: 'client',
-        clientName: job.clientId.fullName,
-        artisanName: job.artisanId.fullName,
-      });
-      sendEmailSafe({ to: clientUser.email, subject, html });
-    }
-    if (artisanUser?.email) {
-      const { subject, html } = appointmentBooked({
-        appointment,
-        recipientRole: 'artisan',
-        clientName: job.clientId.fullName,
-        artisanName: job.artisanId.fullName,
-      });
-      sendEmailSafe({ to: artisanUser.email, subject, html });
-    }
-  }
-
-  await notifyParty({
-    req,
-    recipientUserId: job.clientId.userId,
-    title: 'Artisan accepted your request',
-    body: `${job.artisanId.fullName} accepted "${job.title}".`,
-    type: 'job',
-    data: { jobId: job._id, status: 'accepted' },
-  });
-
-  const clientUser = await User.findById(job.clientId.userId).select('email');
-  if (clientUser?.email) {
-    const { subject, html } = jobStatusChanged({
-      job,
-      status: 'accepted',
-      actorName: job.artisanId.fullName,
-    });
-    sendEmailSafe({ to: clientUser.email, subject, html });
-  }
-
-  res.json({ success: true, data: { job }, message: 'Job accepted.' });
-});
+// acceptJob removed — artisan quotes directly from pending status.
+// Client accepting the quote is the approval. Artisan can only decline or send quote.
 
 // POST /api/v1/jobs/:id/reject — artisan declines a pending request
 export const rejectJob = asyncHandler(async (req, res) => {
@@ -368,66 +301,16 @@ export const cancelJob = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { job }, message: 'Job cancelled.' });
 });
 
-// POST /api/v1/jobs/:id/approve-start — flip the caller's start-approval flag.
-// When both flags are true, the job transitions to in_progress and startedAt is set.
-export const approveStart = asyncHandler(async (req, res) => {
-  const { job, isClient } = await loadJobAndAuth(req);
-  if (job.status !== 'accepted') {
-    throw new AppError('Job must be accepted before start can be approved.', 400);
-  }
-
-  if (isClient) {
-    if (job.clientStartApproved) {
-      return res.json({ success: true, data: { job }, message: 'Already approved.' });
-    }
-    job.clientStartApproved = true;
-  } else {
-    if (job.artisanStartApproved) {
-      return res.json({ success: true, data: { job }, message: 'Already approved.' });
-    }
-    job.artisanStartApproved = true;
-  }
-
-  let transitioned = false;
-  if (job.clientStartApproved && job.artisanStartApproved) {
-    job.status = 'in_progress';
-    job.startedAt = new Date();
-    transitioned = true;
-  }
-
-  await job.save();
-
-  // Notify the other party
-  const otherUserId = isClient ? job.artisanId.userId : job.clientId.userId;
-  if (transitioned) {
-    await notifyParty({
-      req,
-      recipientUserId: otherUserId,
-      title: 'Job started',
-      body: `Both parties confirmed — "${job.title}" is now in progress. Daily billing has begun.`,
-      type: 'job',
-      data: { jobId: job._id, status: 'in_progress' },
-    });
-  } else {
-    await notifyParty({
-      req,
-      recipientUserId: otherUserId,
-      title: 'Awaiting your approval to start',
-      body: `${isClient ? job.clientId.fullName : job.artisanId.fullName} approved start of "${job.title}". Confirm to begin.`,
-      type: 'job',
-      data: { jobId: job._id, awaiting: 'start' },
-    });
-  }
-
-  res.json({ success: true, data: { job }, message: transitioned ? 'Job started.' : 'Start approved — waiting on the other party.' });
-});
-
-// POST /api/v1/jobs/:id/approve-end — same as approve-start but for completion.
+// POST /api/v1/jobs/:id/approve-end — both parties confirm work is done.
+// Works from 'accepted' (quote accepted) directly — no in_progress gate needed.
 // totalAmount is already locked from the accepted quote — no recompute needed.
 export const approveEnd = asyncHandler(async (req, res) => {
   const { job, isClient } = await loadJobAndAuth(req);
-  if (job.status !== 'in_progress') {
-    throw new AppError('Job must be in progress before end can be approved.', 400);
+  if (!['accepted', 'in_progress'].includes(job.status)) {
+    throw new AppError('Job must be accepted before completion can be confirmed.', 400);
+  }
+  if (job.paymentStatus !== 'paid') {
+    throw new AppError('Payment must be completed before confirming job completion.', 400);
   }
 
   if (isClient) {
@@ -446,7 +329,6 @@ export const approveEnd = asyncHandler(async (req, res) => {
   if (job.clientEndApproved && job.artisanEndApproved) {
     job.status = 'completed';
     job.endedAt = new Date();
-    // totalAmount was locked when client accepted the quote — nothing to recompute.
     transitioned = true;
   }
 
@@ -454,12 +336,40 @@ export const approveEnd = asyncHandler(async (req, res) => {
 
   const otherUserId = isClient ? job.artisanId.userId : job.clientId.userId;
   if (transitioned) {
+    // Auto-release escrow — both parties confirmed, platform releases immediately.
+    // Atomic findOneAndUpdate prevents double-credit from racing requests.
+    const entry = await EscrowEntry.findOneAndUpdate(
+      { entityType: 'job', entityId: job._id, status: 'held' },
+      { status: 'released', releasedAt: new Date() },
+      { new: true }
+    );
+    if (entry) {
+      const { feeAmount, netAmount } = await releaseEscrow({
+        sellerProfileId: entry.sellerProfileId,
+        amount: entry.amount,
+        source: 'job',
+        referenceId: job._id,
+      });
+      entry.feeAmount = feeAmount;
+      entry.netAmount = netAmount;
+      await entry.save();
+    }
+
     const total = `₦${(job.totalAmount || 0).toLocaleString('en-NG')}`;
+    // Notify both parties
     await notifyParty({
       req,
-      recipientUserId: otherUserId,
+      recipientUserId: job.artisanId.userId,
+      title: 'Job completed — payment released',
+      body: `Both parties confirmed "${job.title}" is done. ${total} has been released to your wallet.`,
+      type: 'job',
+      data: { jobId: job._id, status: 'completed' },
+    });
+    await notifyParty({
+      req,
+      recipientUserId: job.clientId.userId,
       title: 'Job completed',
-      body: `Both parties confirmed completion of "${job.title}". Total: ${total}.`,
+      body: `"${job.title}" is complete. ${total} has been released to the artisan.`,
       type: 'job',
       data: { jobId: job._id, status: 'completed' },
     });
@@ -467,8 +377,8 @@ export const approveEnd = asyncHandler(async (req, res) => {
     await notifyParty({
       req,
       recipientUserId: otherUserId,
-      title: 'Awaiting your approval to complete',
-      body: `${isClient ? job.clientId.fullName : job.artisanId.fullName} approved completion of "${job.title}". Confirm to finalise.`,
+      title: 'Awaiting your confirmation',
+      body: `${isClient ? job.clientId.fullName : job.artisanId.fullName} confirmed "${job.title}" is done. Please confirm to release payment.`,
       type: 'job',
       data: { jobId: job._id, awaiting: 'end' },
     });
@@ -477,62 +387,6 @@ export const approveEnd = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     data: { job },
-    message: transitioned ? 'Job completed.' : 'End approved — waiting on the other party.',
+    message: transitioned ? 'Job completed and payment released.' : 'Confirmed — waiting on the other party.',
   });
-});
-
-// POST /api/v1/jobs/:id/accept-work — client confirms the work meets standard.
-// This releases escrow to the artisan (after the platform hold period). Once
-// accepted, no dispute can be raised — surfaced clearly in the client-side modal.
-export const acceptWork = asyncHandler(async (req, res) => {
-  const { job } = await loadJobAndAuth(req, 'client');
-
-  if (job.status !== 'completed') {
-    throw new AppError('Job must be completed before work can be accepted.', 400);
-  }
-  if (job.paymentStatus !== 'paid') {
-    throw new AppError('Job must be paid before work can be accepted.', 400);
-  }
-  if (job.workAccepted) {
-    return res.json({
-      success: true,
-      data: { job },
-      message: 'Work already accepted.',
-    });
-  }
-
-  job.workAccepted = true;
-  job.workAcceptedAt = new Date();
-  await job.save();
-
-  // Atomic claim — flip held → released in one shot. If a parallel call
-  // (button double-click, racing webhook) already claimed it, skip the wallet
-  // mutation. Prevents double-credit.
-  const entry = await EscrowEntry.findOneAndUpdate(
-    { entityType: 'job', entityId: job._id, status: 'held' },
-    { status: 'released', releasedAt: new Date() },
-    { new: true }
-  );
-  if (entry) {
-    const { feeAmount, netAmount } = await releaseEscrow({
-      sellerProfileId: entry.sellerProfileId,
-      amount: entry.amount,
-      source: 'job',
-      referenceId: job._id,
-    });
-    entry.feeAmount = feeAmount;
-    entry.netAmount = netAmount;
-    await entry.save();
-  }
-
-  await notifyParty({
-    req,
-    recipientUserId: job.artisanId.userId,
-    title: 'Client accepted your work',
-    body: `${job.clientId.fullName} accepted "${job.title}". Funds release to your wallet after the hold period.`,
-    type: 'job',
-    data: { jobId: job._id, status: 'accepted' },
-  });
-
-  res.json({ success: true, data: { job }, message: 'Work accepted, funds released.' });
 });

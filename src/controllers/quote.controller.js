@@ -114,8 +114,8 @@ export const editQuote = asyncHandler(async (req, res) => {
   if (quote.artisanId.toString() !== profile._id.toString()) {
     throw new AppError('Not authorised.', 403);
   }
-  if (quote.status !== 'sent') {
-    throw new AppError('Only a sent quote can be edited.', 400);
+  if (!['sent', 'rejected'].includes(quote.status)) {
+    throw new AppError('Only a sent or rejected quote can be edited.', 400);
   }
 
   const { labourType, labourRate, labourQty, materials, notes } = req.body;
@@ -181,6 +181,9 @@ export const acceptQuote = asyncHandler(async (req, res) => {
   if (!quote) throw new AppError('Quote not found.', 404);
   if (quote.clientId.toString() !== profile._id.toString()) {
     throw new AppError('Not authorised.', 403);
+  }
+  if (quote.status === 'accepted') {
+    return res.json({ success: true, data: { quote, totalAmount: quote.total }, message: 'Quote already accepted.' });
   }
   if (quote.status !== 'sent') {
     throw new AppError('Only a pending quote can be accepted.', 400);

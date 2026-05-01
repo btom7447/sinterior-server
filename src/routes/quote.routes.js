@@ -27,8 +27,9 @@ router.post(
   restrictTo('artisan'),
   [
     body('jobId').isMongoId().withMessage('Valid jobId required'),
-    body('pricingMode').isIn(['flat', 'sqm', 'unit']).withMessage('pricingMode must be flat, sqm, or unit'),
-    body('labourCost').isFloat({ min: 0 }).withMessage('labourCost must be a non-negative number'),
+    body('labourType').isIn(['flat','hourly','daily','sqm','unit']).withMessage('labourType must be flat, hourly, daily, sqm, or unit'),
+    body('labourRate').isFloat({ min: 0 }).withMessage('labourRate must be a non-negative number'),
+    body('labourQty').optional().isFloat({ min: 0 }),
     body('materials').optional().isArray(),
     body('notes').optional().isString().trim().isLength({ max: 1000 }),
   ],
