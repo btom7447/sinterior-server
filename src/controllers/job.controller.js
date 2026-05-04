@@ -72,9 +72,12 @@ export const createJob = asyncHandler(async (req, res) => {
     throw new AppError('Your account is suspended. Contact admin to reinstate.', 403);
   }
 
+  const artisanSkillDoc = await ArtisanProfile.findOne({ profileId: artisanId }).select('skill').lean();
+  const skillLabel = artisanSkillDoc?.skill || 'Work';
+
   const finalTitle =
     (title && title.trim()) ||
-    `Job request from ${clientProfile.fullName || 'client'}`;
+    `${skillLabel} request from ${clientProfile.fullName || 'client'}`;
 
   const job = await Job.create({
     clientId: clientProfile._id,
@@ -239,6 +242,20 @@ const loadJobAndAuth = async (req, expectedRole) => {
 
 // acceptJob removed — artisan quotes directly from pending status.
 // Client accepting the quote is the approval. Artisan can only decline or send quote.
+
+// PATCH /api/v1/jobs/:id/title — artisan updates the job title
+export const updateJobTitle = asyncHandler(async (req, res) => {
+  const { job } = await loadJobAndAuth(req, 'artisan');
+  if (!['pending', 'quote_pending', 'accepted', 'in_progress'].includes(job.status)) {
+    throw new AppError('Cannot update title on a completed or cancelled job.', 400);
+  }
+  const title = (req.body?.title || '').trim();
+  if (!title) throw new AppError('Title is required.', 400);
+  if (title.length > 200) throw new AppError('Title must be 200 characters or fewer.', 400);
+  job.title = title;
+  await job.save();
+  res.json({ success: true, data: { job }, message: 'Title updated.' });
+});
 
 // POST /api/v1/jobs/:id/reject — artisan declines a pending request
 export const rejectJob = asyncHandler(async (req, res) => {

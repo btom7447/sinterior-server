@@ -19,9 +19,10 @@ router.post(
 );
 
 // ── GET /api/v1/payments/verify ──────────────────────────────────────────────
+// No auth — Paystack redirects here after payment; in-memory token is gone.
+// The reference itself is the secret; we verify against Paystack's API.
 router.get(
   '/verify',
-  protect,
   [query('reference').notEmpty().withMessage('reference is required')],
   validate,
   verify
