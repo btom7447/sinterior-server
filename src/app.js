@@ -49,6 +49,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 
+// Behind Railway's proxy: trust the first X-Forwarded-For hop so req.ip is the
+// real client IP. Without this, express-rate-limit buckets ALL users under the
+// proxy's IP — one shared 500 req/15min limit platform-wide.
+app.set('trust proxy', 1);
+
 // ── 1. Security headers ───────────────────────────────────────────────────────
 app.use(
   helmet({
