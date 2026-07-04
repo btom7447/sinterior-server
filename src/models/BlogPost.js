@@ -46,7 +46,6 @@ const blogPostSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-blogPostSchema.index({ slug: 1 });
 blogPostSchema.index({ status: 1, publishedAt: -1 });
 
 // Auto-set publishedAt when status changes to published

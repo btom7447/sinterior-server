@@ -6,7 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../../');
 
 // Load env file based on environment:
-//  - Production (Render/cloud): vars are injected directly — no file needed
+//  - Production (Railway/cloud): vars are injected directly — no file needed
 //  - Development: .env.local takes precedence over .env
 // dotenv silently ignores missing files, so this is always safe.
 dotenv.config({ path: path.join(root, '.env.local') });
@@ -23,7 +23,7 @@ if (missing.length > 0) {
   console.error(
     `\n[FATAL] Missing required environment variables: ${missing.join(', ')}\n` +
     `  → In development: add them to .env.local\n` +
-    `  → In production (Render): add them in Dashboard → Environment\n`
+    `  → In production (Railway): add them in the service's Variables tab\n`
   );
   process.exit(1);
 }
@@ -48,7 +48,7 @@ const config = Object.freeze({
       ? 'https://www.sintherior.com'
       : (process.env.CLIENT_URL || 'http://localhost:3000').split(',')[0].trim()),
 
-  SERVER_URL: process.env.SERVER_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`,
+  SERVER_URL: process.env.SERVER_URL || `http://localhost:${PORT}`,
 
   MONGO_URI: process.env.MONGO_URI,
 

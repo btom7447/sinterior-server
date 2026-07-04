@@ -20,8 +20,6 @@ const platformSettingSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-platformSettingSchema.index({ key: 1 });
-
 // Helper statics
 platformSettingSchema.statics.get = async function (key, defaultValue = null) {
   const doc = await this.findOne({ key });
