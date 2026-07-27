@@ -36,6 +36,11 @@ router.patch(
       .trim()
       .isLength({ max: 80 })
       .withMessage('City cannot exceed 80 characters'),
+    body('preferredTrades')
+      .optional()
+      .isArray({ max: 19 })
+      .withMessage('preferredTrades must be an array of trade ids'),
+    body('preferredTrades.*').isString().trim().isLength({ max: 40 }),
     body('state')
       .optional()
       .isString()

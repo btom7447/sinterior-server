@@ -38,6 +38,12 @@ const profileSchema = new mongoose.Schema(
       trim: true,
       maxlength: [500, 'Bio cannot exceed 500 characters'],
     },
+    // Feed personalization seed — trade ids picked at onboarding (taste picker).
+    // Merged with save-history affinity in the pin feed ranking.
+    preferredTrades: {
+      type: [String],
+      default: [],
+    },
     // Mirrors the role on User so profiles can be queried without a join
     role: {
       type: String,

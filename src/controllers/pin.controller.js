@@ -41,7 +41,7 @@ export const getFeed = asyncHandler(async (req, res) => {
   let followedIds = [];
   let affinityTrades = [];
   if (req.user) {
-    const profile = await Profile.findOne({ userId: req.user.id }).select('_id');
+    const profile = await Profile.findOne({ userId: req.user.id }).select('_id preferredTrades');
     if (profile) {
       const [follows, recentSaves] = await Promise.all([
         Follow.find({ follower: profile._id }).select('followed').lean(),
@@ -58,6 +58,8 @@ export const getFeed = asyncHandler(async (req, res) => {
           .lean();
         affinityTrades = [...new Set(savedPins.map((p) => p.taxonomy?.trade).filter(Boolean))];
       }
+      // Onboarding taste-picker seed — matters most before any save history exists.
+      affinityTrades = [...new Set([...affinityTrades, ...(profile.preferredTrades || [])])];
     }
   }
 

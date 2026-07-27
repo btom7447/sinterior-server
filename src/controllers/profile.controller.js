@@ -26,7 +26,7 @@ export const getMe = asyncHandler(async (req, res) => {
 // ── PATCH /api/v1/profiles/me ─────────────────────────────────────────────────
 export const updateMe = asyncHandler(async (req, res) => {
   // Whitelist of fields the user may update via this endpoint
-  const ALLOWED = ['fullName', 'phone', 'city', 'state', 'bio'];
+  const ALLOWED = ['fullName', 'phone', 'city', 'state', 'bio', 'preferredTrades'];
 
   const updates = {};
   ALLOWED.forEach((field) => {
