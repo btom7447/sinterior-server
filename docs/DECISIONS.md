@@ -4,6 +4,9 @@ _Platform-canonical decision log — other repos reference this file._
 
 _Newest first. Every entry: date · decision · why · what it forecloses._
 
+## 2026-07-27 — SCOPE CORRECTION: the Pinterest-first surface is the MOBILE APP, not the website
+Supersedes the "feed becomes home" decision below. The website keeps its original landing page and structure unchanged; the Pinterest-style pin feed lives on the web at **/feed** (restyled to match the mobile app, replacing the old admin-curated feed page). The mobile app (React Native + Expo) is the surface whose entry route is the feed. All server-side feed work (Pin/Board/Follow API, ranking, backfill) is surface-agnostic and unaffected. The home-swap that briefly shipped was reverted the same day (client `6fdf19c`).
+
 ## 2026-07-27 — Feed M0 contract decisions
 Budget bands: **explicit ₦ ranges** (5 band ids with kobo ranges server-side: under-100k / 100k-500k / 500k-2m / 2m-10m / 10m-plus). View counts: **schema now, tracking endpoint P2** — saves are v1's only live ranking signal. Taxonomy (trades/rooms/bands): **server-side code constants** exposed at `GET /api/v1/pins/taxonomy`; trade ids reuse the client's existing skill-category ids; changes require a commit (deliberate churn). Rooms are nullable on pins.
 
