@@ -118,6 +118,41 @@ export const getConversations = asyncHandler(async (req, res) => {
 });
 
 // ── GET /api/v1/chat/messages/:conversationId ─────────────────────────────────
+
+// ── GET /api/v1/chat/conversations/:conversationId ────────────────────────────
+// Thread metadata for clients that must NOT trust navigation params for the
+// recipient (mobile deep-link hardening): resolves the counterpart participant
+// and the caller's own profile id server-side.
+export const getConversationMeta = asyncHandler(async (req, res) => {
+  const profile = await Profile.findOne({ userId: req.user.id });
+  if (!profile) throw new AppError('Profile not found.', 404);
+
+  const { conversationId } = req.params;
+  const anyMessage = await Message.findOne({
+    conversationId,
+    $or: [{ senderId: profile._id }, { receiverId: profile._id }],
+  }).select('senderId receiverId');
+  if (!anyMessage) throw new AppError('Conversation not found or access denied.', 404);
+
+  const otherId =
+    anyMessage.senderId.toString() === profile._id.toString()
+      ? anyMessage.receiverId
+      : anyMessage.senderId;
+  const other = await Profile.findById(otherId).select('fullName avatarUrl role');
+
+  sendSuccess(res, {
+    myProfileId: profile._id,
+    participant: other
+      ? {
+          id: other._id,
+          fullName: other.fullName,
+          avatarUrl: resolveUploadUrl(other.avatarUrl),
+          role: other.role,
+        }
+      : null,
+  }, 'Conversation metadata retrieved.');
+});
+
 export const getMessages = asyncHandler(async (req, res) => {
   const profile = await Profile.findOne({ userId: req.user.id });
   if (!profile) {

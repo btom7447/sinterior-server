@@ -96,7 +96,7 @@ export const createJob = asyncHandler(async (req, res) => {
     req,
     recipientUserId: artisanProfile.userId,
     title: bookingType === 'urgent' ? 'New urgent job request' : 'New job booking',
-    body: `${clientProfile.fullName} sent you a ${bookingType === 'urgent' ? 'urgent' : 'scheduled'} request: "${title}".`,
+    body: `${clientProfile.fullName} sent you a ${bookingType === 'urgent' ? 'urgent' : 'scheduled'} request: "${finalTitle}".`,
     type: 'job',
     data: { jobId: job._id },
   });

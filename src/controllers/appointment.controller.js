@@ -75,7 +75,7 @@ export const getMyAppointments = asyncHandler(async (req, res) => {
 
   const { page, limit, skip } = getPagination(req.query);
   const role = req.user.role;
-  const filter = role === 'artisan' ? { artisanId: profile._id } : { clientId: profile._id };
+  const filter = role === 'client' ? { clientId: profile._id } : { $or: [{ artisanId: profile._id }, { clientId: profile._id }] };
 
   if (req.query.status) filter.status = req.query.status;
   if (req.query.upcoming === 'true') {

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { body, param, query } from 'express-validator';
-import { getConversations, getMessages, sendMessage, searchUserByEmail } from '../controllers/chat.controller.js';
+import { getConversationMeta,
+  getConversations, getMessages, sendMessage, searchUserByEmail } from '../controllers/chat.controller.js';
 import { protect } from '../middleware/auth.js';
 import { uploadMultiple, resizeImage } from '../middleware/upload.js';
 import validate from '../middleware/validate.js';
@@ -15,6 +16,9 @@ router.get('/search', searchUserByEmail);
 
 // ── GET /api/v1/chat/conversations ────────────────────────────────────────────
 router.get('/conversations', getConversations);
+
+// ── GET /api/v1/chat/conversations/:conversationId — thread metadata ─────────
+router.get('/conversations/:conversationId', getConversationMeta);
 
 // ── GET /api/v1/chat/messages/:conversationId ─────────────────────────────────
 router.get(
