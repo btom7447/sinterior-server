@@ -36,6 +36,8 @@ export const getFeed = asyncHandler(async (req, res) => {
   if (budgetBand) match['taxonomy.budgetBand'] = budgetBand;
   if (tag) match['taxonomy.tags'] = tag;
   if (author && mongoose.isValidObjectId(author)) match.author = new mongoose.Types.ObjectId(author);
+  // Free-text search (title/caption/tags) — $text must live in the pipeline's first $match.
+  if (req.query.q) match.$text = { $search: String(req.query.q).slice(0, 100) };
 
   // Personalization inputs — cheap lookups, only when authenticated.
   let followedIds = [];

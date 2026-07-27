@@ -68,6 +68,7 @@ const pinSchema = new mongoose.Schema(
 
 // Feed query path: active pins ranked by recency/score, filterable by taxonomy.
 pinSchema.index({ status: 1, createdAt: -1 });
+pinSchema.index({ title: 'text', caption: 'text', 'taxonomy.tags': 'text' }); // free-text search
 pinSchema.index({ status: 1, 'taxonomy.trade': 1, createdAt: -1 });
 pinSchema.index({ status: 1, 'taxonomy.room': 1, createdAt: -1 });
 pinSchema.index({ author: 1, createdAt: -1 });
