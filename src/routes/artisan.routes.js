@@ -3,6 +3,7 @@ import { body, query, param } from 'express-validator';
 import {
   list,
   getNearby,
+  getByProfileId,
   getById,
   getMine,
   updateOnboarding,
@@ -64,6 +65,14 @@ router.post(
   uploadSingle('file'),
   resizeImage(800, 0, 80),
   uploadCertification
+);
+
+// ── GET /api/v1/artisans/by-profile/:profileId ────────────────────────────────
+router.get(
+  '/by-profile/:profileId',
+  [param('profileId').isMongoId().withMessage('Invalid profile ID')],
+  validate,
+  getByProfileId
 );
 
 // ── GET /api/v1/artisans/:id ──────────────────────────────────────────────────

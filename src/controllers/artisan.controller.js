@@ -172,6 +172,18 @@ export const getNearby = asyncHandler(async (req, res) => {
 });
 
 // ── GET /api/v1/artisans/:id ──────────────────────────────────────────────────
+// ── GET /api/v1/artisans/by-profile/:profileId ────────────────────────────────
+// Same payload as getById but keyed on the Profile id — pins and follows carry
+// Profile ids, so mobile can jump pin → artisan screen without a second hop.
+export const getByProfileId = asyncHandler(async (req, res) => {
+  const artisan = await ArtisanProfile.findOne({ profileId: req.params.profileId }).populate({
+    path: 'profileId',
+    select: 'fullName avatarUrl phone city state bio isSuspended',
+  });
+  if (!artisan) throw new AppError('Artisan not found.', 404);
+  sendSuccess(res, { artisan }, 'Artisan retrieved.');
+});
+
 export const getById = asyncHandler(async (req, res) => {
   const artisan = await ArtisanProfile.findById(req.params.id).populate({
     path: 'profileId',
