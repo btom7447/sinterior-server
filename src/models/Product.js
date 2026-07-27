@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { resolveImageUrls } from '../utils/resolveUrl.js';
+import { syncProductPin, removePinsForSource } from '../services/pinSync.service.js';
 
 const productSchema = new mongoose.Schema(
   {
@@ -116,6 +117,25 @@ productSchema.index({ supplierId: 1 });
 productSchema.index({ category: 1 });
 productSchema.index({ isActive: 1 });
 productSchema.index({ name: 'text', description: 'text' }); // full-text search
+
+// ── Derived-pin sync (feed) ──────────────────────────────────────────────────
+// Covers every mutation path the controllers use: create → save; edits and
+// isActive soft-deletes → findOneAndUpdate. The update hook re-fetches because
+// post('findOneAndUpdate') receives the PRE-update doc when {new:true} wasn't
+// passed (the soft-delete path). Sync is best-effort and never throws.
+productSchema.post('save', (doc) => {
+  if (!doc) return;
+  if (doc.isActive === false) removePinsForSource('product', doc._id);
+  else syncProductPin(doc);
+});
+
+productSchema.post('findOneAndUpdate', async function (doc) {
+  if (!doc) return;
+  const fresh = await this.model.findById(doc._id);
+  if (!fresh) return;
+  if (fresh.isActive === false) removePinsForSource('product', fresh._id);
+  else syncProductPin(fresh);
+});
 
 const Product = mongoose.model('Product', productSchema);
 

@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { resolveImageUrls } from '../utils/resolveUrl.js';
+import { syncPropertyPin, removePinsForSource } from '../services/pinSync.service.js';
 
 const propertySchema = new mongoose.Schema(
   {
@@ -110,6 +111,21 @@ propertySchema.index({ propertyType: 1 });
 propertySchema.index({ city: 1, state: 1 });
 propertySchema.index({ price: 1 });
 propertySchema.index({ isActive: 1 });
+
+// ── Derived-pin sync (feed) — same pattern as Product.js ────────────────────
+propertySchema.post('save', (doc) => {
+  if (!doc) return;
+  if (doc.isActive === false) removePinsForSource('property', doc._id);
+  else syncPropertyPin(doc);
+});
+
+propertySchema.post('findOneAndUpdate', async function (doc) {
+  if (!doc) return;
+  const fresh = await this.model.findById(doc._id);
+  if (!fresh) return;
+  if (fresh.isActive === false) removePinsForSource('property', fresh._id);
+  else syncPropertyPin(fresh);
+});
 
 const Property = mongoose.model('Property', propertySchema);
 

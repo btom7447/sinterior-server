@@ -44,6 +44,9 @@ import walletRoutes from './routes/wallet.routes.js';
 import bankRoutes from './routes/bank.routes.js';
 import payoutRoutes from './routes/payout.routes.js';
 import quoteRoutes from './routes/quote.routes.js';
+import pinRoutes from './routes/pin.routes.js';
+import boardRoutes from './routes/board.routes.js';
+import followRoutes from './routes/follow.routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -170,6 +173,9 @@ app.use('/api/v1/wallet', walletRoutes);
 app.use('/api/v1', bankRoutes); // mounts /banks, /banks/resolve, /bank-accounts
 app.use('/api/v1/payouts', payoutRoutes);
 app.use('/api/v1/quotes', quoteRoutes);
+app.use('/api/v1/pins', pinRoutes);
+app.use('/api/v1/boards', boardRoutes);
+app.use('/api/v1', followRoutes); // mounts /profiles/:id/follow
 
 // ── 11. 404 — catch-all for unmatched routes ──────────────────────────────────
 app.use((req, _res, next) => {

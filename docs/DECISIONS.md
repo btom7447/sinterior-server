@@ -4,6 +4,9 @@ _Platform-canonical decision log — other repos reference this file._
 
 _Newest first. Every entry: date · decision · why · what it forecloses._
 
+## 2026-07-27 — Feed M0 contract decisions
+Budget bands: **explicit ₦ ranges** (5 band ids with kobo ranges server-side: under-100k / 100k-500k / 500k-2m / 2m-10m / 10m-plus). View counts: **schema now, tracking endpoint P2** — saves are v1's only live ranking signal. Taxonomy (trades/rooms/bands): **server-side code constants** exposed at `GET /api/v1/pins/taxonomy`; trade ids reuse the client's existing skill-category ids; changes require a commit (deliberate churn). Rooms are nullable on pins.
+
 ## 2026-07-27 — Pinterest-style pivot: four scope decisions
 1. **Feed becomes home** — sintherior.com lands on the masonry feed; old home → `/about`. Full commitment to inspiration-first identity.
 2. **Native pin creation: artisans + suppliers only** (clients browse/save/act). Keeps every pin commercially actionable and moderation load low.
@@ -39,5 +42,3 @@ Business is CAC-registered → pursue official verification; bot code already sp
 ## 2026-06-09 — WhatsApp bot isolated from the web marketplace
 Own phone-keyed models + own Mongo DB (`sintherior-bot`), API-only admin. The web app's email/password models don't fit WhatsApp phone-keyed users. Forecloses: no shared collections between bot and web app.
 
-## 2026-07-27 — Feed M0 contract decisions
-Budget bands: **explicit ₦ ranges** (5 band ids with kobo ranges server-side: under-100k / 100k-500k / 500k-2m / 2m-10m / 10m-plus). View counts: **schema now, tracking endpoint P2** — saves are v1's only live ranking signal. Taxonomy (trades/rooms/bands): **server-side code constants** exposed at `GET /api/v1/pins/taxonomy`; trade ids reuse the client's existing skill-category ids; changes require a commit (deliberate churn). Rooms are nullable on pins.
