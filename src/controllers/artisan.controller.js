@@ -20,7 +20,23 @@ export const list = asyncHandler(async (req, res) => {
     filter.skill = { $regex: skill, $options: 'i' };
   }
 
-  const [total, artisans] = await Promise.all([
+  // A search term must narrow the WHOLE collection, not just the current page.
+  // Name lives on the joined Profile, so resolve matching profile ids first and
+  // fold them into the DB filter — then paginate the already-narrowed set.
+  if (search) {
+    const rx = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    const matchingProfiles = await Profile.find({ fullName: rx }).select('_id').lean();
+    filter.$or = [
+      { skill: rx },
+      { skillCategory: rx },
+      { city: rx },
+      ...(matchingProfiles.length
+        ? [{ profileId: { $in: matchingProfiles.map((p) => p._id) } }]
+        : []),
+    ];
+  }
+
+  const [total, results] = await Promise.all([
     ArtisanProfile.countDocuments(filter),
     ArtisanProfile.find(filter)
       .populate({ path: 'profileId', select: 'fullName avatarUrl phone city state bio isSuspended' })
@@ -30,22 +46,7 @@ export const list = asyncHandler(async (req, res) => {
       .lean(),
   ]);
 
-  // If search term provided, filter in-memory (profile fields aren't indexed)
-  let results = artisans;
-  if (search) {
-    const q = search.toLowerCase();
-    results = artisans.filter((a) => {
-      const profile = a.profileId;
-      return (
-        a.skill?.toLowerCase().includes(q) ||
-        a.skillCategory?.toLowerCase().includes(q) ||
-        a.city?.toLowerCase().includes(q) ||
-        profile?.fullName?.toLowerCase().includes(q)
-      );
-    });
-  }
-
-  const pagination = buildPaginationMeta(search ? results.length : total, page, limit);
+  const pagination = buildPaginationMeta(total, page, limit);
   sendPaginated(res, results, pagination, 'Artisans retrieved.');
 });
 
