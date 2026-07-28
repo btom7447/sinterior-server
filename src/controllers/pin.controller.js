@@ -5,12 +5,21 @@ import Pin from '../models/Pin.js';
 import Profile from '../models/Profile.js';
 import Follow from '../models/Follow.js';
 import BoardPin from '../models/BoardPin.js';
+import PinComment from '../models/PinComment.js';
+import PinLike from '../models/PinLike.js';
 import { TRADES, ROOMS, BUDGET_BANDS } from '../config/taxonomy.js';
+import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import { resolveUploadUrl } from '../utils/resolveUrl.js';
 
 const FEED_LIMIT_MAX = 50;
 const EDITABLE_FIELDS = ['title', 'caption'];
 const EDITABLE_TAXONOMY = ['trade', 'room', 'budgetBand', 'tags'];
+
+const myProfile = async (userId) => {
+  const profile = await Profile.findOne({ userId }).select('_id');
+  if (!profile) throw new AppError('Profile not found.', 404);
+  return profile;
+};
 
 // ── GET /pins/taxonomy ────────────────────────────────────────────────────────
 export const getTaxonomy = asyncHandler(async (_req, res) => {
@@ -201,12 +210,140 @@ export const getPin = asyncHandler(async (req, res) => {
   if (pin.status === 'hidden' && req.user?.role !== 'admin') throw new AppError('Pin not found.', 404);
 
   let savedByMe = false;
+  let likedByMe = false;
   if (req.user) {
     const profile = await Profile.findOne({ userId: req.user.id }).select('_id');
-    if (profile) savedByMe = !!(await BoardPin.exists({ owner: profile._id, pinId: pin._id }));
+    if (profile) {
+      const [saved, liked] = await Promise.all([
+        BoardPin.exists({ owner: profile._id, pinId: pin._id }),
+        PinLike.exists({ owner: profile._id, pinId: pin._id }),
+      ]);
+      savedByMe = !!saved;
+      likedByMe = !!liked;
+    }
   }
 
-  res.status(200).json({ success: true, data: { pin, savedByMe } });
+  res.status(200).json({ success: true, data: { pin, savedByMe, likedByMe } });
+});
+
+// ── POST/DELETE /pins/:id/like ────────────────────────────────────────────────
+// Idempotent both ways: the unique index absorbs a double tap, and the counter
+// only moves when the membership actually changed.
+export const likePin = asyncHandler(async (req, res) => {
+  const profile = await myProfile(req.user.id);
+  const pin = await Pin.findById(req.params.id).select('_id status');
+  if (!pin || pin.status !== 'active') throw new AppError('Pin not found.', 404);
+
+  const existing = await PinLike.findOne({ pinId: pin._id, owner: profile._id });
+  if (!existing) {
+    await PinLike.create({ pinId: pin._id, owner: profile._id });
+    await Pin.updateOne({ _id: pin._id }, { $inc: { 'counters.likes': 1 } });
+  }
+
+  const fresh = await Pin.findById(pin._id).select('counters.likes').lean();
+  res.status(200).json({
+    success: true,
+    data: { likedByMe: true, likes: fresh?.counters?.likes ?? 0 },
+  });
+});
+
+export const unlikePin = asyncHandler(async (req, res) => {
+  const profile = await myProfile(req.user.id);
+  const removed = await PinLike.findOneAndDelete({ pinId: req.params.id, owner: profile._id });
+  if (removed) {
+    await Pin.updateOne(
+      { _id: req.params.id, 'counters.likes': { $gt: 0 } },
+      { $inc: { 'counters.likes': -1 } }
+    );
+  }
+
+  const fresh = await Pin.findById(req.params.id).select('counters.likes').lean();
+  res.status(200).json({
+    success: true,
+    data: { likedByMe: false, likes: fresh?.counters?.likes ?? 0 },
+  });
+});
+
+// ── GET /pins/:id/comments ────────────────────────────────────────────────────
+export const listComments = asyncHandler(async (req, res) => {
+  const { page, limit, skip } = getPagination(req.query);
+  const filter = { pinId: req.params.id, status: 'active' };
+
+  const [comments, total] = await Promise.all([
+    PinComment.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate('author', 'fullName avatarUrl role')
+      .lean(),
+    PinComment.countDocuments(filter),
+  ]);
+
+  const data = comments.map((c) => ({
+    ...c,
+    author: c.author ? { ...c.author, avatarUrl: resolveUploadUrl(c.author.avatarUrl) } : null,
+  }));
+
+  res.status(200).json({
+    success: true,
+    data: { comments: data },
+    pagination: buildPaginationMeta(total, page, limit),
+  });
+});
+
+// ── POST /pins/:id/comments ───────────────────────────────────────────────────
+export const addComment = asyncHandler(async (req, res) => {
+  const profile = await myProfile(req.user.id);
+  const pin = await Pin.findById(req.params.id).select('_id status');
+  if (!pin || pin.status !== 'active') throw new AppError('Pin not found.', 404);
+
+  const body = String(req.body.body ?? '').trim();
+  if (!body) throw new AppError('Write something first.', 400);
+
+  const created = await PinComment.create({ pinId: pin._id, author: profile._id, body });
+  await Pin.updateOne({ _id: pin._id }, { $inc: { 'counters.comments': 1 } });
+
+  const comment = await PinComment.findById(created._id)
+    .populate('author', 'fullName avatarUrl role')
+    .lean();
+
+  res.status(201).json({
+    success: true,
+    data: {
+      comment: {
+        ...comment,
+        author: comment.author
+          ? { ...comment.author, avatarUrl: resolveUploadUrl(comment.author.avatarUrl) }
+          : null,
+      },
+    },
+    message: 'Comment posted.',
+  });
+});
+
+// ── DELETE /pins/comments/:commentId ──────────────────────────────────────────
+// The comment's author, the pin's author, or an admin. A pin owner needs to be
+// able to clear their own wall without waiting on moderation.
+export const deleteComment = asyncHandler(async (req, res) => {
+  const comment = await PinComment.findById(req.params.commentId);
+  if (!comment || comment.status === 'removed') throw new AppError('Comment not found.', 404);
+
+  const profile = await Profile.findOne({ userId: req.user.id }).select('_id');
+  const pin = await Pin.findById(comment.pinId).select('author');
+  const mine = profile && comment.author.toString() === profile._id.toString();
+  const myPin = profile && pin && pin.author.toString() === profile._id.toString();
+  if (!mine && !myPin && req.user.role !== 'admin') {
+    throw new AppError('You cannot remove this comment.', 403);
+  }
+
+  comment.status = 'removed';
+  await comment.save();
+  await Pin.updateOne(
+    { _id: comment.pinId, 'counters.comments': { $gt: 0 } },
+    { $inc: { 'counters.comments': -1 } }
+  );
+
+  res.status(200).json({ success: true, data: null, message: 'Comment removed.' });
 });
 
 // ── POST /pins ────────────────────────────────────────────────────────────────

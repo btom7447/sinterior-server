@@ -43,6 +43,8 @@ const pinSchema = new mongoose.Schema(
 
     counters: {
       saves: { type: Number, default: 0, min: 0 },
+      likes: { type: Number, default: 0, min: 0 },
+      comments: { type: Number, default: 0, min: 0 },
       // Schema-only in v1 — tracking endpoint lands in P2 (DECISIONS 2026-07-27).
       views: { type: Number, default: 0, min: 0 },
     },

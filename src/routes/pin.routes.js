@@ -8,6 +8,11 @@ import {
   createPin,
   updatePin,
   deletePin,
+  likePin,
+  unlikePin,
+  listComments,
+  addComment,
+  deleteComment,
 } from '../controllers/pin.controller.js';
 
 const router = Router();
@@ -15,7 +20,14 @@ const router = Router();
 router.get('/taxonomy', getTaxonomy);
 router.get('/taxonomy/covers', getTradeCovers); // real imagery per trade      // GET /pins/taxonomy — trades/rooms/bands
 router.get('/feed', optionalAuth, getFeed); // GET /pins/feed — public, personalized when authed
-router.get('/:id', optionalAuth, getPin);   // GET /pins/:id — public (savedByMe when authed)
+// Comments read publicly; the literal path must beat the /:id wildcard.
+router.get('/:id/comments', listComments);
+router.delete('/comments/:commentId', protect, deleteComment);
+router.get('/:id', optionalAuth, getPin);   // GET /pins/:id — public (savedByMe/likedByMe when authed)
+
+router.post('/:id/like', protect, likePin);
+router.delete('/:id/like', protect, unlikePin);
+router.post('/:id/comments', protect, addComment);
 
 router.post('/', protect, restrictTo('artisan', 'supplier'), createPin);
 router.patch('/:id', protect, updatePin);   // owner or admin (checked in controller)

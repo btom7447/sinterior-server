@@ -6,6 +6,7 @@ import {
   updateBoard,
   deleteBoard,
   getBoard,
+  getSavedPins,
   savePinToBoard,
   removePinFromBoard,
   getPinBoardState,
@@ -15,6 +16,7 @@ const router = Router();
 
 router.get('/', protect, listMyBoards);
 router.post('/', protect, createBoard);
+router.get('/saved', protect, getSavedPins);                // must precede /:id
 router.get('/pin-state/:pinId', protect, getPinBoardState); // board-picker state
 router.get('/:id', optionalAuth, getBoard); // public boards viewable; privacy enforced in controller
 router.patch('/:id', protect, updateBoard);

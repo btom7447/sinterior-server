@@ -13,12 +13,108 @@ const myProfile = async (userId) => {
   return profile;
 };
 
+const PREVIEW_PER_BOARD = 3;
+
+/**
+ * Newest pin media per board, for the mosaic on a board card.
+ * One aggregation plus one find, regardless of how many boards there are.
+ */
+const previewsForBoards = async (boardIds) => {
+  if (!boardIds.length) return new Map();
+
+  const grouped = await BoardPin.aggregate([
+    { $match: { boardId: { $in: boardIds } } },
+    { $sort: { createdAt: -1 } },
+    { $group: { _id: '$boardId', pinIds: { $push: '$pinId' } } },
+    { $project: { pinIds: { $slice: ['$pinIds', PREVIEW_PER_BOARD] } } },
+  ]);
+
+  const allIds = grouped.flatMap((g) => g.pinIds);
+  const pins = await Pin.find({ _id: { $in: allIds }, status: 'active' })
+    .select('mediaUrl posterUrl mediaType')
+    .lean();
+  const mediaById = new Map(
+    pins.map((p) => [
+      p._id.toString(),
+      resolveUploadUrl(p.mediaType === 'video' ? p.posterUrl || p.mediaUrl : p.mediaUrl),
+    ])
+  );
+
+  return new Map(
+    grouped.map((g) => [
+      g._id.toString(),
+      g.pinIds.map((id) => mediaById.get(id.toString())).filter(Boolean),
+    ])
+  );
+};
+
 // ── GET /boards (mine) ────────────────────────────────────────────────────────
 export const listMyBoards = asyncHandler(async (req, res) => {
   const profile = await myProfile(req.user.id);
   const raw = await Board.find({ owner: profile._id }).sort({ updatedAt: -1 }).lean();
-  const boards = raw.map((b) => ({ ...b, coverUrl: resolveUploadUrl(b.coverUrl) }));
+  const previews = await previewsForBoards(raw.map((b) => b._id));
+
+  const boards = raw.map((b) => ({
+    ...b,
+    coverUrl: resolveUploadUrl(b.coverUrl),
+    previewUrls: previews.get(b._id.toString()) ?? [],
+  }));
   res.status(200).json({ success: true, data: { boards } });
+});
+
+// ── GET /boards/saved ─────────────────────────────────────────────────────────
+// Everything the signed-in user has saved, newest first, across every board.
+// Grouped by pin so a pin kept on three boards appears once, dated by its most
+// recent save.
+export const getSavedPins = asyncHandler(async (req, res) => {
+  const profile = await myProfile(req.user.id);
+  const boards = await Board.find({ owner: profile._id }).select('_id').lean();
+  const boardIds = boards.map((b) => b._id);
+
+  const { page, limit, skip } = getPagination(req.query);
+  if (!boardIds.length) {
+    return res.status(200).json({
+      success: true,
+      data: { pins: [] },
+      pagination: buildPaginationMeta(0, page, limit),
+    });
+  }
+
+  const base = [
+    { $match: { boardId: { $in: boardIds } } },
+    { $sort: { createdAt: -1 } },
+    { $group: { _id: '$pinId', savedAt: { $first: '$createdAt' } } },
+    { $sort: { savedAt: -1 } },
+  ];
+
+  const [counted, rows] = await Promise.all([
+    BoardPin.aggregate([...base, { $count: 'n' }]),
+    BoardPin.aggregate([...base, { $skip: skip }, { $limit: limit }]),
+  ]);
+
+  const found = await Pin.find({ _id: { $in: rows.map((r) => r._id) }, status: 'active' })
+    .populate('author', 'fullName avatarUrl role city state')
+    .lean();
+  const byId = new Map(found.map((p) => [p._id.toString(), p]));
+
+  // Restore the save order the aggregation established.
+  const pins = rows
+    .map((r) => byId.get(r._id.toString()))
+    .filter(Boolean)
+    .map((p) => ({
+      ...p,
+      mediaUrl: resolveUploadUrl(p.mediaUrl),
+      posterUrl: p.posterUrl ? resolveUploadUrl(p.posterUrl) : undefined,
+      author: p.author
+        ? { ...p.author, avatarUrl: resolveUploadUrl(p.author.avatarUrl) }
+        : null,
+    }));
+
+  res.status(200).json({
+    success: true,
+    data: { pins },
+    pagination: buildPaginationMeta(counted[0]?.n ?? 0, page, limit),
+  });
 });
 
 // ── POST /boards ──────────────────────────────────────────────────────────────
