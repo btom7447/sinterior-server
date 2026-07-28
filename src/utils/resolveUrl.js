@@ -6,17 +6,31 @@ import config from '../config/env.js';
  */
 export const resolveUploadUrl = (path) => {
   if (!path) return path;
+  // Pin.media holds objects, not strings, and this helper is reached through
+  // the generic walker below — returning non-strings untouched keeps that safe.
+  if (typeof path !== 'string') return path;
   if (path.startsWith('http')) return path;
   return `${config.SERVER_URL}${path}`;
 };
 
 /**
- * Resolve every string in an images array.
+ * Resolve an images array. Entries are usually strings, but album entries are
+ * `{ url, posterUrl }` objects, so both shapes are handled here.
  */
 export const resolveImageUrls = (images) => {
   if (!Array.isArray(images)) return images;
-  return images.map(resolveUploadUrl);
+  return images.map((item) => {
+    if (typeof item === 'string' || !item) return resolveUploadUrl(item);
+    return {
+      ...item,
+      url: resolveUploadUrl(item.url),
+      posterUrl: item.posterUrl ? resolveUploadUrl(item.posterUrl) : item.posterUrl,
+    };
+  });
 };
+
+/** A pin's album with every URL made absolute. Safe on pins that have none. */
+export const resolvePinAlbum = (media) => (Array.isArray(media) ? resolveImageUrls(media) : []);
 
 /**
  * Known fields that hold upload paths.

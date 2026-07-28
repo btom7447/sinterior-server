@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import { protect, optionalAuth, restrictTo } from '../middleware/auth.js';
+import { uploadMultiple, resizeImage } from '../middleware/upload.js';
 import {
   getTaxonomy,
   getTradeCovers,
   getFeed,
   getPin,
   createPin,
+  uploadPinMedia,
   updatePin,
   deletePin,
   likePin,
@@ -29,6 +31,14 @@ router.post('/:id/like', protect, likePin);
 router.delete('/:id/like', protect, unlikePin);
 router.post('/:id/comments', protect, addComment);
 
+router.post(
+  '/upload',
+  protect,
+  restrictTo('artisan', 'supplier'),
+  uploadMultiple('images', 10),
+  resizeImage(1400, 0, 85),
+  uploadPinMedia
+);
 router.post('/', protect, restrictTo('artisan', 'supplier'), createPin);
 router.patch('/:id', protect, updatePin);   // owner or admin (checked in controller)
 router.delete('/:id', protect, deletePin);  // owner or admin (soft delete)

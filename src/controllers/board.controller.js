@@ -5,7 +5,7 @@ import BoardPin from '../models/BoardPin.js';
 import Pin from '../models/Pin.js';
 import Profile from '../models/Profile.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
-import { resolveUploadUrl } from '../utils/resolveUrl.js';
+import { resolvePinAlbum, resolveUploadUrl } from '../utils/resolveUrl.js';
 
 const myProfile = async (userId) => {
   const profile = await Profile.findOne({ userId }).select('_id');
@@ -105,6 +105,7 @@ export const getSavedPins = asyncHandler(async (req, res) => {
       ...p,
       mediaUrl: resolveUploadUrl(p.mediaUrl),
       posterUrl: p.posterUrl ? resolveUploadUrl(p.posterUrl) : undefined,
+      media: resolvePinAlbum(p.media),
       author: p.author
         ? { ...p.author, avatarUrl: resolveUploadUrl(p.author.avatarUrl) }
         : null,
@@ -209,6 +210,7 @@ export const getBoard = asyncHandler(async (req, res) => {
       ...p,
       mediaUrl: resolveUploadUrl(p.mediaUrl),
       posterUrl: p.posterUrl ? resolveUploadUrl(p.posterUrl) : undefined,
+      media: resolvePinAlbum(p.media),
     }));
 
   res.status(200).json({

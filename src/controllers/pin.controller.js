@@ -9,7 +9,7 @@ import PinComment from '../models/PinComment.js';
 import PinLike from '../models/PinLike.js';
 import { TRADES, ROOMS, BUDGET_BANDS } from '../config/taxonomy.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
-import { resolveUploadUrl } from '../utils/resolveUrl.js';
+import { resolvePinAlbum, resolveUploadUrl } from '../utils/resolveUrl.js';
 
 const FEED_LIMIT_MAX = 50;
 const EDITABLE_FIELDS = ['title', 'caption'];
@@ -189,6 +189,7 @@ export const getFeed = asyncHandler(async (req, res) => {
       ...p,
       mediaUrl: resolveUploadUrl(p.mediaUrl),
       posterUrl: p.posterUrl ? resolveUploadUrl(p.posterUrl) : undefined,
+      media: resolvePinAlbum(p.media),
       author: a
         ? { _id: a._id, fullName: a.fullName, avatarUrl: resolveUploadUrl(a.avatarUrl), role: a.role, city: a.city, state: a.state }
         : null,
@@ -346,6 +347,21 @@ export const deleteComment = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, data: null, message: 'Comment removed.' });
 });
 
+// ── POST /pins/upload ─────────────────────────────────────────────────────────
+// Photos for a pin, in one request, so an album is one upload rather than ten.
+// Returns URLs only: the pin itself is created in a second call once the maker
+// has written a title, which means a half-finished post leaves no pin behind.
+export const uploadPinMedia = asyncHandler(async (req, res) => {
+  if (!req.files?.length) {
+    throw new AppError('Attach at least one photo.', 400);
+  }
+  res.status(200).json({
+    success: true,
+    data: { urls: req.files.map((f) => resolveUploadUrl(f.url)) },
+    message: 'Photos uploaded.',
+  });
+});
+
 // ── POST /pins ────────────────────────────────────────────────────────────────
 // Native creation (artisan/supplier). M0 accepts already-uploaded Cloudinary
 // URLs; M1 adds the dedicated upload flow with server-side dimension capture.
@@ -354,15 +370,39 @@ export const createPin = asyncHandler(async (req, res) => {
   if (!profile) throw new AppError('Profile not found.', 404);
 
   const { mediaUrl, posterUrl, mediaType, aspectRatio, title, caption, taxonomy } = req.body;
-  if (!mediaUrl || !title) throw new AppError('mediaUrl and title are required.', 400);
+
+  // Albums arrive as media[]; a single item may still arrive the old way. Both
+  // end up stored the same: media[] holds the set, and the flat fields mirror
+  // its first entry so nothing downstream has to branch.
+  const album = Array.isArray(req.body.media)
+    ? req.body.media
+        .filter((m) => m && typeof m.url === 'string' && m.url.trim())
+        .slice(0, 10)
+        .map((m) => ({
+          type: m.type === 'video' ? 'video' : 'image',
+          url: m.url.trim(),
+          posterUrl: m.posterUrl,
+          aspectRatio: typeof m.aspectRatio === 'number' ? m.aspectRatio : 1,
+        }))
+    : [];
+
+  const lead = album[0];
+  const primaryUrl = lead?.url ?? mediaUrl;
+  if (!primaryUrl || !title) throw new AppError('At least one image and a title are required.', 400);
 
   const pin = await Pin.create({
     author: profile._id,
     sourceType: 'native',
-    mediaType: mediaType === 'video' ? 'video' : 'image',
-    mediaUrl,
-    posterUrl,
-    aspectRatio: typeof aspectRatio === 'number' ? aspectRatio : 1,
+    mediaType: (lead?.type ?? mediaType) === 'video' ? 'video' : 'image',
+    mediaUrl: primaryUrl,
+    posterUrl: lead?.posterUrl ?? posterUrl,
+    aspectRatio:
+      typeof lead?.aspectRatio === 'number'
+        ? lead.aspectRatio
+        : typeof aspectRatio === 'number'
+          ? aspectRatio
+          : 1,
+    media: album,
     title,
     caption,
     taxonomy: {

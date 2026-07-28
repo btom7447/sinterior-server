@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { resolveUploadUrl } from '../utils/resolveUrl.js';
+import { resolvePinAlbum, resolveUploadUrl } from '../utils/resolveUrl.js';
 import { TRADES, ROOMS, BUDGET_BAND_IDS } from '../config/taxonomy.js';
 
 // Canonical feed unit (docs/prd.md). A pin is either authored natively by an
@@ -27,6 +27,30 @@ const pinSchema = new mongoose.Schema(
     mediaType: { type: String, enum: ['image', 'video'], default: 'image' },
     mediaUrl: { type: String, required: [true, 'mediaUrl is required'], trim: true },
     posterUrl: { type: String, trim: true },
+
+    // Album pins. A finished job is rarely one photograph, and forcing an
+    // artisan to post the same kitchen five times buries everyone else's work.
+    //
+    // When this is set it is the full set, and mediaUrl / mediaType /
+    // posterUrl / aspectRatio above mirror media[0] — so every existing reader
+    // (the feed grid, derived-pin sync, the website) keeps working untouched
+    // and only surfaces that know about albums have to care.
+    media: {
+      type: [
+        {
+          _id: false,
+          type: { type: String, enum: ['image', 'video'], default: 'image' },
+          url: { type: String, required: true, trim: true },
+          posterUrl: { type: String, trim: true },
+          aspectRatio: { type: Number, default: 1, min: 0.2, max: 5 },
+        },
+      ],
+      default: [],
+      validate: {
+        validator: (v) => !v || v.length <= 10,
+        message: 'A pin can hold at most 10 items.',
+      },
+    },
     // width / height — stored at upload so masonry renders with zero layout
     // shift. Defaults to 1 (square) when the source dimensions are unknown.
     aspectRatio: { type: Number, default: 1, min: 0.2, max: 5 },
@@ -62,6 +86,7 @@ const pinSchema = new mongoose.Schema(
       transform(_doc, ret) {
         if (ret.mediaUrl) ret.mediaUrl = resolveUploadUrl(ret.mediaUrl);
         if (ret.posterUrl) ret.posterUrl = resolveUploadUrl(ret.posterUrl);
+        if (ret.media?.length) ret.media = resolvePinAlbum(ret.media);
         return ret;
       },
     },
