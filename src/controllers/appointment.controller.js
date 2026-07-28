@@ -13,7 +13,9 @@ import { appointmentBooked } from '../utils/emailTemplates.js';
 
 export const validateAppointment = [
   body('artisanId').isMongoId().withMessage('Valid artisan ID required'),
-  body('title').trim().notEmpty().isLength({ max: 200 }),
+  // 240 leaves room for client-side prefixes (e.g. "Property viewing: <title>")
+  // where the embedded entity title can itself be 200 chars.
+  body('title').trim().notEmpty().isLength({ max: 240 }),
   body('date').isISO8601().withMessage('Valid date required'),
   body('time').optional().trim().isLength({ max: 10 }),
   body('location').optional().trim().isLength({ max: 200 }),
