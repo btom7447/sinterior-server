@@ -45,3 +45,20 @@ export const uploadLimiter = rateLimit({
     message: 'Too many upload requests, please try again in an hour.',
   },
 });
+
+/**
+ * Payment verification limiter. /payments/verify is unauthenticated by design
+ * (Paystack redirects the browser there), so it needs its own tight budget —
+ * the general limiter is far too generous for an endpoint that hits Paystack's
+ * API and, before idempotency, could be replayed.
+ */
+export const paymentVerifyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many verification attempts. Please wait a few minutes.',
+  },
+});

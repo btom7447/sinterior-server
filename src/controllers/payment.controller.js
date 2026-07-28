@@ -212,6 +212,11 @@ export const verify = asyncHandler(async (req, res) => {
   if (type === 'order') {
     const orderForCheck = await Order.findById(entityId).select('totalAmount paymentStatus');
     if (!orderForCheck) throw new AppError('Order not found.', 404);
+    // Idempotency: /verify is unauthenticated (Paystack redirect) — a replayed
+    // reference must never re-fire receipts/notifications/escrow work.
+    if (orderForCheck.paymentStatus === 'paid') {
+      return sendSuccess(res, { status: 'success', type, entityId }, 'Payment already verified.');
+    }
     const expectedKobo = toKobo(orderForCheck.totalAmount);
     if (Number(txn.amount) !== expectedKobo) {
       throw new AppError(
@@ -222,6 +227,9 @@ export const verify = asyncHandler(async (req, res) => {
   } else if (type === 'job') {
     const jobForCheck = await Job.findById(entityId).select('totalAmount budget paymentStatus');
     if (!jobForCheck) throw new AppError('Job not found.', 404);
+    if (jobForCheck.paymentStatus === 'paid') {
+      return sendSuccess(res, { status: 'success', type, entityId }, 'Payment already verified.');
+    }
     const expectedNgn = jobForCheck.totalAmount && jobForCheck.totalAmount > 0
       ? jobForCheck.totalAmount
       : jobForCheck.budget;
@@ -427,4 +435,42 @@ export const webhook = asyncHandler(async (req, res) => {
 
   // Paystack expects 200 response
   res.status(200).json({ received: true });
+});
+
+// ── GET /api/v1/payments/status/:type/:entityId ──────────────────────────────
+// Authenticated payment-state poll for native clients. /verify exists for
+// Paystack's browser redirect and treats the reference as a bearer secret;
+// mobile should never depend on that — it asks, as itself, whether its own
+// order/job is paid.
+export const status = asyncHandler(async (req, res) => {
+  const { type, entityId } = req.params;
+
+  const profile = await Profile.findOne({ userId: req.user.id }).select('_id');
+  if (!profile) throw new AppError('Profile not found.', 404);
+
+  if (type === 'order') {
+    const order = await Order.findById(entityId).select('buyerId paymentStatus totalAmount');
+    if (!order) throw new AppError('Order not found.', 404);
+    if (order.buyerId.toString() !== profile._id.toString()) {
+      throw new AppError('You do not have access to this order.', 403);
+    }
+    return sendSuccess(
+      res,
+      { paymentStatus: order.paymentStatus, amount: order.totalAmount },
+      'Payment status retrieved.'
+    );
+  }
+
+  const job = await Job.findById(entityId).select('clientId artisanId paymentStatus totalAmount');
+  if (!job) throw new AppError('Job not found.', 404);
+  const mine =
+    job.clientId.toString() === profile._id.toString() ||
+    job.artisanId?.toString() === profile._id.toString();
+  if (!mine) throw new AppError('You do not have access to this job.', 403);
+
+  sendSuccess(
+    res,
+    { paymentStatus: job.paymentStatus, amount: job.totalAmount },
+    'Payment status retrieved.'
+  );
 });

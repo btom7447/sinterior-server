@@ -1,7 +1,8 @@
 import express, { Router } from 'express';
-import { body, query } from 'express-validator';
-import { initialize, verify, webhook } from '../controllers/payment.controller.js';
+import { body, param, query } from 'express-validator';
+import { initialize, status, verify, webhook } from '../controllers/payment.controller.js';
 import { protect } from '../middleware/auth.js';
+import { paymentVerifyLimiter } from '../middleware/rateLimiter.js';
 import validate from '../middleware/validate.js';
 
 const router = Router();
@@ -21,8 +22,19 @@ router.post(
 // ── GET /api/v1/payments/verify ──────────────────────────────────────────────
 // No auth — Paystack redirects here after payment; in-memory token is gone.
 // The reference itself is the secret; we verify against Paystack's API.
+// ── GET /api/v1/payments/status/:type/:entityId ─────────────────────────────
+// Authenticated poll for native clients (see controller note).
+router.get(
+  '/status/:type/:entityId',
+  protect,
+  [param('type').isIn(['order', 'job']), param('entityId').isMongoId()],
+  validate,
+  status
+);
+
 router.get(
   '/verify',
+  paymentVerifyLimiter,
   [query('reference').notEmpty().withMessage('reference is required')],
   validate,
   verify
