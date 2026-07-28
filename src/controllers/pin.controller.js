@@ -36,6 +36,16 @@ export const getFeed = asyncHandler(async (req, res) => {
   if (budgetBand) match['taxonomy.budgetBand'] = budgetBand;
   if (tag) match['taxonomy.tags'] = tag;
   if (author && mongoose.isValidObjectId(author)) match.author = new mongoose.Types.ObjectId(author);
+  // Restrict to given source kinds, e.g. "native,product" for surfaces that
+  // should only show hireable work and buyable goods (not property/admin).
+  if (req.query.sourceType) {
+    const allowed = ['native', 'product', 'property', 'admin'];
+    const types = String(req.query.sourceType)
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => allowed.includes(s));
+    if (types.length) match.sourceType = { $in: types };
+  }
   // Free-text search (title/caption/tags) — $text must live in the pipeline's first $match.
   if (req.query.q) match.$text = { $search: String(req.query.q).slice(0, 100) };
 
@@ -65,11 +75,36 @@ export const getFeed = asyncHandler(async (req, res) => {
     }
   }
 
+  // sort=top ranks by demonstrated popularity instead of freshness. NOTE:
+  // counters.views is schema-only (never incremented — tracking is a P2 item),
+  // so "popular" genuinely means saves + editorial promotion, nothing more.
+  const topFirst = req.query.sort === 'top';
+
   const pipeline = [
     { $match: match },
     {
       $addFields: {
-        score: {
+        score: topFirst
+          ? {
+              $add: [
+                { $multiply: ['$counters.saves', 100] },
+                { $cond: ['$isFeatured', 250, 0] },
+                // Gentle recency tiebreak so equal-save pins aren't frozen in
+                // one order forever.
+                {
+                  $divide: [
+                    50,
+                    {
+                      $add: [
+                        1,
+                        { $divide: [{ $subtract: ['$$NOW', '$createdAt'] }, 1000 * 60 * 60 * 24] },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            }
+          : {
           $add: [
             // Recency: 100 at birth, halved roughly every day of age.
             {
