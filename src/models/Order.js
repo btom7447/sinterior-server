@@ -54,6 +54,9 @@ const orderSchema = new mongoose.Schema(
       required: [true, 'Total amount is required'],
       min: [0, 'Total amount cannot be negative'],
     },
+    // Delivery contact captured at checkout (may differ from the buyer profile).
+    contactName: { type: String, trim: true, maxlength: 100 },
+    contactPhone: { type: String, trim: true, maxlength: 20 },
     deliveryAddress: {
       type: String,
       trim: true,

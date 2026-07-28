@@ -148,6 +148,8 @@ export const create = asyncHandler(async (req, res) => {
     deliveryAddress,
     deliveryState,
     city,
+    contactName,
+    contactPhone,
     note,
     paymentMethod,
     paymentStatus: paymentMethod === 'Pay on Delivery' ? 'pending' : 'pending',

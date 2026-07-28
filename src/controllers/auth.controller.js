@@ -42,9 +42,13 @@ const buildUserPayload = (user, profile) => ({
   email: user.email,
   role: user.role,
   isEmailVerified: user.isEmailVerified,
+  // Native clients read profileId/fullName directly; web reads the nested profile.
+  profileId: profile ? profile._id : null,
+  fullName: profile ? profile.fullName : null,
   profile: profile
     ? {
         id: profile._id,
+        _id: profile._id,
         fullName: profile.fullName,
         avatarUrl: resolveUploadUrl(profile.avatarUrl),
         phone: profile.phone || null,

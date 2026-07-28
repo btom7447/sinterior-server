@@ -5,6 +5,7 @@ import BoardPin from '../models/BoardPin.js';
 import Pin from '../models/Pin.js';
 import Profile from '../models/Profile.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
+import { resolveUploadUrl } from '../utils/resolveUrl.js';
 
 const myProfile = async (userId) => {
   const profile = await Profile.findOne({ userId }).select('_id');
@@ -15,7 +16,8 @@ const myProfile = async (userId) => {
 // ── GET /boards (mine) ────────────────────────────────────────────────────────
 export const listMyBoards = asyncHandler(async (req, res) => {
   const profile = await myProfile(req.user.id);
-  const boards = await Board.find({ owner: profile._id }).sort({ updatedAt: -1 });
+  const raw = await Board.find({ owner: profile._id }).sort({ updatedAt: -1 }).lean();
+  const boards = raw.map((b) => ({ ...b, coverUrl: resolveUploadUrl(b.coverUrl) }));
   res.status(200).json({ success: true, data: { boards } });
 });
 
@@ -104,7 +106,14 @@ export const getBoard = asyncHandler(async (req, res) => {
       .lean(),
     BoardPin.countDocuments({ boardId: board._id }),
   ]);
-  const pins = memberships.map((m) => m.pinId).filter(Boolean);
+  const pins = memberships
+    .map((m) => m.pinId)
+    .filter(Boolean)
+    .map((p) => ({
+      ...p,
+      mediaUrl: resolveUploadUrl(p.mediaUrl),
+      posterUrl: p.posterUrl ? resolveUploadUrl(p.posterUrl) : undefined,
+    }));
 
   res.status(200).json({
     success: true,
