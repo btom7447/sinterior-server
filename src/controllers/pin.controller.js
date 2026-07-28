@@ -281,3 +281,31 @@ export const deletePin = asyncHandler(async (req, res) => {
   await pin.save();
   res.status(200).json({ success: true, data: null, message: 'Pin removed.' });
 });
+
+// ── GET /pins/taxonomy/covers ────────────────────────────────────────────────
+// One representative image per trade, chosen by saves then recency, so the
+// interest picker can show real work instead of icons. Trades with no pins are
+// simply absent; the client falls back to a plain tile for those.
+export const getTradeCovers = asyncHandler(async (_req, res) => {
+  const rows = await Pin.aggregate([
+    { $match: { status: 'active', 'taxonomy.trade': { $ne: null } } },
+    { $sort: { 'counters.saves': -1, createdAt: -1 } },
+    {
+      $group: {
+        _id: '$taxonomy.trade',
+        mediaUrl: { $first: '$mediaUrl' },
+        posterUrl: { $first: '$posterUrl' },
+        mediaType: { $first: '$mediaType' },
+      },
+    },
+  ]);
+
+  const covers = {};
+  for (const row of rows) {
+    covers[row._id] = resolveUploadUrl(
+      row.mediaType === 'video' ? row.posterUrl || row.mediaUrl : row.mediaUrl
+    );
+  }
+
+  res.status(200).json({ success: true, data: { covers } });
+});

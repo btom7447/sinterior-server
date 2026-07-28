@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { protect, optionalAuth, restrictTo } from '../middleware/auth.js';
 import {
   getTaxonomy,
+  getTradeCovers,
   getFeed,
   getPin,
   createPin,
@@ -11,7 +12,8 @@ import {
 
 const router = Router();
 
-router.get('/taxonomy', getTaxonomy);      // GET /pins/taxonomy — trades/rooms/bands
+router.get('/taxonomy', getTaxonomy);
+router.get('/taxonomy/covers', getTradeCovers); // real imagery per trade      // GET /pins/taxonomy — trades/rooms/bands
 router.get('/feed', optionalAuth, getFeed); // GET /pins/feed — public, personalized when authed
 router.get('/:id', optionalAuth, getPin);   // GET /pins/:id — public (savedByMe when authed)
 
