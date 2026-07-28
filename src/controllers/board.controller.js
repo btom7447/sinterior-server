@@ -62,6 +62,33 @@ export const listMyBoards = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, data: { boards } });
 });
 
+// ── GET /boards/featured ──────────────────────────────────────────────────────
+// Public boards worth browsing: someone else's collection is the best possible
+// entry point into a taxonomy nobody wants to read. Private boards never appear
+// here, and boards too thin to fill a mosaic are left out rather than shown
+// half empty.
+const FEATURED_MIN_PINS = 3;
+
+export const getFeaturedBoards = asyncHandler(async (req, res) => {
+  const limit = Math.min(20, Math.max(1, parseInt(req.query.limit, 10) || 8));
+
+  const raw = await Board.find({ isPrivate: { $ne: true }, pinCount: { $gte: FEATURED_MIN_PINS } })
+    .sort({ pinCount: -1, updatedAt: -1 })
+    .limit(limit)
+    .populate('owner', 'fullName avatarUrl role')
+    .lean();
+
+  const previews = await previewsForBoards(raw.map((b) => b._id));
+  const boards = raw.map((b) => ({
+    ...b,
+    coverUrl: resolveUploadUrl(b.coverUrl),
+    previewUrls: previews.get(b._id.toString()) ?? [],
+    owner: b.owner ? { ...b.owner, avatarUrl: resolveUploadUrl(b.owner.avatarUrl) } : null,
+  }));
+
+  res.status(200).json({ success: true, data: { boards } });
+});
+
 // ── GET /boards/saved ─────────────────────────────────────────────────────────
 // Everything the signed-in user has saved, newest first, across every board.
 // Grouped by pin so a pin kept on three boards appears once, dated by its most
