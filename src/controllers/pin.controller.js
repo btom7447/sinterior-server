@@ -4,7 +4,9 @@ import AppError from '../utils/AppError.js';
 import Pin from '../models/Pin.js';
 import Profile from '../models/Profile.js';
 import Follow from '../models/Follow.js';
+import Board from '../models/Board.js';
 import BoardPin from '../models/BoardPin.js';
+import { defaultBoardName } from '../config/boards.js';
 import PinLike from '../models/PinLike.js';
 import PinMute from '../models/PinMute.js';
 import { TRADES, ROOMS, BUDGET_BANDS } from '../config/taxonomy.js';
@@ -571,8 +573,37 @@ export const publishPin = asyncHandler(async (req, res) => {
   pin.publishedAt = new Date();
   await pin.save();
 
+  // Filed on the way out rather than on the way in. The composer deliberately
+  // does not board a draft — a board is a shelf of finished things, and putting
+  // something nobody can see on one leaves a hole in it — so publishing is
+  // where it has to happen or the pin is live and missing from its own author's
+  // profile. Best effort: the pin is published either way.
+  try {
+    await fileOnDefaultBoard(pin);
+  } catch (err) {
+    console.warn('[publish] could not file on a board:', err.message);
+  }
+
   res.status(200).json({ success: true, data: { pin }, message: 'Published.' });
 });
+
+/** Put a newly published pin on its author's first board, making one if needed. */
+async function fileOnDefaultBoard(pin) {
+  const already = await BoardPin.exists({ owner: pin.author, pinId: pin._id });
+  if (already) return;
+
+  const profile = await Profile.findById(pin.author).select('_id role').lean();
+  if (!profile) return;
+
+  let board = await Board.findOne({ owner: profile._id }).sort({ createdAt: 1 });
+  if (!board) board = await Board.create({ owner: profile._id, name: defaultBoardName(profile.role) });
+
+  await BoardPin.create({ boardId: board._id, pinId: pin._id, owner: profile._id });
+  await Promise.all([
+    Pin.updateOne({ _id: pin._id }, { $inc: { 'counters.saves': 1 } }),
+    Board.updateOne({ _id: board._id }, { $inc: { pinCount: 1 } }),
+  ]);
+}
 
 // ── POST /pins/:id/duplicate ──────────────────────────────────────────────────
 // Copies a pin into a fresh draft. The use is a maker who shoots one job in
