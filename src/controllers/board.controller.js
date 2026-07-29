@@ -402,6 +402,44 @@ export const removePinFromBoard = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, data: { saved: false }, message: 'Removed from board.' });
 });
 
+// ── DELETE /boards/pin/:pinId — take this pin off every board of mine ────────
+// The Saved button is a toggle, and a pin can sit on several of one person's
+// boards. Untoggling it has to mean "I do not have this saved" rather than
+// "removed from one of the three places you put it", which would leave the
+// button still reading Saved and looking broken.
+//
+// The board picker remains the precise tool: this is the blunt one, and it is
+// the one the toggle needs.
+export const unsavePinEverywhere = asyncHandler(async (req, res) => {
+  const profile = await myProfile(req.user.id);
+  const memberships = await BoardPin.find({ owner: profile._id, pinId: req.params.pinId })
+    .select('boardId')
+    .lean();
+
+  if (!memberships.length) {
+    return res.status(200).json({ success: true, data: { saved: false, removed: 0 } });
+  }
+
+  await BoardPin.deleteMany({ owner: profile._id, pinId: req.params.pinId });
+
+  // Each board loses one, and the pin loses however many boards it was on.
+  await Promise.all([
+    Pin.updateOne(
+      { _id: req.params.pinId, 'counters.saves': { $gte: memberships.length } },
+      { $inc: { 'counters.saves': -memberships.length } }
+    ),
+    ...memberships.map((m) =>
+      Board.updateOne({ _id: m.boardId, pinCount: { $gt: 0 } }, { $inc: { pinCount: -1 } })
+    ),
+  ]);
+
+  res.status(200).json({
+    success: true,
+    data: { saved: false, removed: memberships.length },
+    message: 'Removed from your boards.',
+  });
+});
+
 // ── GET /boards/pin-state/:pinId — which of my boards hold this pin ──────────
 // Powers the one-tap save → board picker UI.
 export const getPinBoardState = asyncHandler(async (req, res) => {

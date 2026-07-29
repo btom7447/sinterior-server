@@ -295,7 +295,13 @@ export const getPin = asyncHandler(async (req, res) => {
     }
   }
 
-  res.status(200).json({ success: true, data: { pin, savedByMe, likedByMe } });
+  // The flags go on the pin as well as beside it. They used to be returned
+  // only alongside, so a pin handed from this screen to anything else — the
+  // long-press ring, a share sheet — arrived not knowing whether it was liked,
+  // and rendered an empty heart on work the viewer had just liked. The feed
+  // puts them on the pin, so this does too and there is one shape to read.
+  const shaped = { ...pin.toJSON(), savedByMe, likedByMe };
+  res.status(200).json({ success: true, data: { pin: shaped, savedByMe, likedByMe } });
 });
 
 // ── POST/DELETE /pins/:id/mute ────────────────────────────────────────────────
