@@ -23,8 +23,23 @@ const myProfile = async (userId) => {
 const PREVIEW_PER_BOARD = 3;
 
 /**
+ * How many saves to consider per board before picking the three to show.
+ *
+ * More than three, because a save can point at a pin that is no longer live —
+ * a draft the author pulled back, or work they removed. Those have to be
+ * skipped over rather than counted, and skipping only works if there are
+ * candidates behind them.
+ */
+const PREVIEW_CANDIDATES = 12;
+
+/**
  * Newest pin media per board, for the mosaic on a board card.
  * One aggregation plus one find, regardless of how many boards there are.
+ *
+ * The order matters: candidates are collected, then narrowed to live pins, then
+ * cut to three. Cutting to three first — which is what this did — meant one
+ * unpublished pin among the newest saves cost the board a tile, so a board with
+ * four saves and three live pins showed two.
  */
 const previewsForBoards = async (boardIds) => {
   if (!boardIds.length) return new Map();
@@ -33,7 +48,7 @@ const previewsForBoards = async (boardIds) => {
     { $match: { boardId: { $in: boardIds } } },
     { $sort: { createdAt: -1 } },
     { $group: { _id: '$boardId', pinIds: { $push: '$pinId' } } },
-    { $project: { pinIds: { $slice: ['$pinIds', PREVIEW_PER_BOARD] } } },
+    { $project: { pinIds: { $slice: ['$pinIds', PREVIEW_CANDIDATES] } } },
   ]);
 
   const allIds = grouped.flatMap((g) => g.pinIds);
@@ -50,7 +65,11 @@ const previewsForBoards = async (boardIds) => {
   return new Map(
     grouped.map((g) => [
       g._id.toString(),
-      g.pinIds.map((id) => mediaById.get(id.toString())).filter(Boolean),
+      g.pinIds
+        .map((id) => mediaById.get(id.toString()))
+        .filter(Boolean)
+        // Newest first is preserved by the aggregation; this only trims.
+        .slice(0, PREVIEW_PER_BOARD),
     ])
   );
 };
