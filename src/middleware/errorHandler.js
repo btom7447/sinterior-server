@@ -1,4 +1,5 @@
 import AppError from '../utils/AppError.js';
+import config from '../config/env.js';
 
 // ── Specific error transformers ───────────────────────────────────────────────
 
@@ -28,6 +29,26 @@ const handleJWTError = () => new AppError('Invalid token. Please log in again.',
 /** JWT expired */
 const handleJWTExpired = () =>
   new AppError('Token expired. Please log in again.', 401);
+
+/**
+ * Multer rejections — a file too big, too many files, or the wrong field.
+ *
+ * These arrived as unhandled 500s, which is the worst possible answer: the app
+ * reads a 500 as "the server is having a moment, try again", so a photo that
+ * will never be accepted looks like a temporary outage and the person retries
+ * forever. They are the caller's problem and have to say so.
+ */
+const handleMulterError = (err, maxMb) => {
+  switch (err.code) {
+    case 'LIMIT_FILE_SIZE':
+      return new AppError(`That file is too large. Photos can be up to ${maxMb}MB.`, 413);
+    case 'LIMIT_FILE_COUNT':
+    case 'LIMIT_UNEXPECTED_FILE':
+      return new AppError('Too many files in one upload.', 400);
+    default:
+      return new AppError('That upload could not be read. Try again.', 400);
+  }
+};
 
 // ── Response helpers ──────────────────────────────────────────────────────────
 
@@ -78,6 +99,7 @@ const errorHandler = (err, req, res, next) => {
   else if (err.code === 11000) error = handleDuplicateKey(err);
   else if (err.name === 'JsonWebTokenError') error = handleJWTError();
   else if (err.name === 'TokenExpiredError') error = handleJWTExpired();
+  else if (err.name === 'MulterError') error = handleMulterError(err, config.MAX_FILE_SIZE_MB);
 
   if (process.env.NODE_ENV === 'development') {
     sendDevError(error, res);
