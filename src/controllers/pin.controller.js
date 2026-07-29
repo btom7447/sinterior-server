@@ -69,9 +69,13 @@ export const getFeed = asyncHandler(async (req, res) => {
   let followedIds = [];
   let affinityTrades = [];
   let mutedTrades = [];
+  // Kept beyond this block: the like/save state of the returned page is
+  // resolved against it once the pins are known.
+  let viewerId = null;
   if (req.user) {
     const profile = await Profile.findOne({ userId: req.user.id }).select('_id preferredTrades');
     if (profile) {
+      viewerId = profile._id;
       const [follows, recentSaves, mutes] = await Promise.all([
         Follow.find({ follower: profile._id }).select('followed').lean(),
         BoardPin.find({ owner: profile._id })
@@ -232,6 +236,22 @@ export const getFeed = asyncHandler(async (req, res) => {
   }
   pins.push(...deferred);
 
+  // Which of this page the viewer has already liked or saved. Two queries for
+  // the whole page rather than one per pin, and the reason it matters: without
+  // it the heart on a grid card cannot know its own state, so it renders empty
+  // on work the viewer has already liked and a second tap reads as the first.
+  let likedIds = new Set();
+  let savedIds = new Set();
+  if (viewerId) {
+    const ids = pins.map((p) => p._id);
+    const [liked, saved] = await Promise.all([
+      PinLike.find({ owner: viewerId, pinId: { $in: ids } }).select('pinId').lean(),
+      BoardPin.find({ owner: viewerId, pinId: { $in: ids } }).select('pinId').lean(),
+    ]);
+    likedIds = new Set(liked.map((l) => String(l.pinId)));
+    savedIds = new Set(saved.map((s) => String(s.pinId)));
+  }
+
   const data = pins.map((p) => {
     const a = authorById.get(p.author?.toString());
     return {
@@ -242,6 +262,8 @@ export const getFeed = asyncHandler(async (req, res) => {
       author: a
         ? { _id: a._id, fullName: a.fullName, avatarUrl: resolveUploadUrl(a.avatarUrl), role: a.role, city: a.city, state: a.state }
         : null,
+      likedByMe: likedIds.has(String(p._id)),
+      savedByMe: savedIds.has(String(p._id)),
       score: undefined,
     };
   });
