@@ -10,6 +10,8 @@ import {
   getSavedPins,
   followBoard,
   unfollowBoard,
+  likeBoard,
+  unlikeBoard,
   savePinToBoard,
   removePinFromBoard,
   getPinBoardState,
@@ -26,6 +28,8 @@ router.get('/:id', optionalAuth, getBoard); // public boards viewable; privacy e
 router.patch('/:id', protect, updateBoard);
 router.delete('/:id', protect, deleteBoard);
 router.post('/:id/follow', protect, followBoard);
+router.post('/:id/like', protect, likeBoard);
+router.delete('/:id/like', protect, unlikeBoard);
 router.delete('/:id/follow', protect, unfollowBoard);
 router.post('/:id/pins', protect, savePinToBoard);
 router.delete('/:id/pins/:pinId', protect, removePinFromBoard);

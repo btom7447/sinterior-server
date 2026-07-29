@@ -7,9 +7,14 @@ import Follow from '../models/Follow.js';
 import BoardPin from '../models/BoardPin.js';
 import PinComment from '../models/PinComment.js';
 import PinLike from '../models/PinLike.js';
+import PinMute from '../models/PinMute.js';
 import { TRADES, ROOMS, BUDGET_BANDS } from '../config/taxonomy.js';
 import { TAG_VOCABULARY, deriveTags, sanitizeTags } from '../config/vocabulary.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
+import {
+  notifyPinCommented,
+  notifyPinLiked,
+} from '../services/feedNotify.service.js';
 import {
   createDirectUpload,
   deleteVideo,
@@ -68,18 +73,40 @@ export const getFeed = asyncHandler(async (req, res) => {
   // Personalization inputs — cheap lookups, only when authenticated.
   let followedIds = [];
   let affinityTrades = [];
+  let mutedTrades = [];
   if (req.user) {
     const profile = await Profile.findOne({ userId: req.user.id }).select('_id preferredTrades');
     if (profile) {
-      const [follows, recentSaves] = await Promise.all([
+      const [follows, recentSaves, mutes] = await Promise.all([
         Follow.find({ follower: profile._id }).select('followed').lean(),
         BoardPin.find({ owner: profile._id })
           .sort({ createdAt: -1 })
           .limit(100)
           .select('pinId')
           .lean(),
+        PinMute.find({ owner: profile._id }).select('pinId trade').lean(),
       ]);
       followedIds = follows.map((f) => f.followed);
+
+      // A muted pin never comes back, on any device.
+      if (mutes.length) match._id = { $nin: mutes.map((m) => m.pinId) };
+
+      // Muting the same trade repeatedly is a clearer statement than muting one
+      // pin, so only a repeated pattern moves ranking. A single mute is treated
+      // as "not this one" rather than "not this kind of work".
+      const perTrade = new Map();
+      for (const mute of mutes) {
+        if (!mute.trade) continue;
+        perTrade.set(mute.trade, (perTrade.get(mute.trade) ?? 0) + 1);
+      }
+      mutedTrades = [...perTrade.entries()].filter(([, n]) => n >= 3).map(([trade]) => trade);
+
+      // Only pins by people you follow. A deliberate choice rather than a
+      // ranking nudge, so an empty following list gives an empty feed and the
+      // app can say so.
+      if (req.query.following === 'true') {
+        match.author = { $in: followedIds };
+      }
       if (recentSaves.length) {
         const savedPins = await Pin.find({ _id: { $in: recentSaves.map((s) => s.pinId) } })
           .select('taxonomy.trade')
@@ -160,6 +187,10 @@ export const getFeed = asyncHandler(async (req, res) => {
             { $cond: [{ $in: ['$author', followedIds] }, 40, 0] },
             { $cond: [{ $in: ['$taxonomy.trade', affinityTrades] }, 20, 0] },
             { $cond: ['$isFeatured', 30, 0] },
+            // Repeatedly muting a trade pushes it down without banning it: the
+            // user may still want the occasional one, and a hard exclusion
+            // would make the mistake unrecoverable.
+            { $cond: [{ $in: ['$taxonomy.trade', mutedTrades] }, -60, 0] },
           ],
         },
       },
@@ -250,6 +281,40 @@ export const getPin = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, data: { pin, savedByMe, likedByMe } });
 });
 
+// ── POST/DELETE /pins/:id/mute ────────────────────────────────────────────────
+// "See fewer like this", recorded server-side. It used to live only on the
+// device, which made it a lie twice over: the pin returned on a second phone,
+// and ranking never learned from the strongest negative signal a user can give.
+export const mutePin = asyncHandler(async (req, res) => {
+  const profile = await myProfile(req.user.id);
+  const pin = await Pin.findById(req.params.id).select('_id taxonomy.trade');
+  if (!pin) throw new AppError('Pin not found.', 404);
+
+  await PinMute.updateOne(
+    { owner: profile._id, pinId: pin._id },
+    { $setOnInsert: { owner: profile._id, pinId: pin._id, trade: pin.taxonomy?.trade ?? null } },
+    { upsert: true }
+  );
+  res.status(200).json({ success: true, data: { muted: true } });
+});
+
+export const unmutePin = asyncHandler(async (req, res) => {
+  const profile = await myProfile(req.user.id);
+  await PinMute.deleteOne({ owner: profile._id, pinId: req.params.id });
+  res.status(200).json({ success: true, data: { muted: false } });
+});
+
+// ── POST /pins/:id/share ──────────────────────────────────────────────────────
+// Counted when a share sheet is opened rather than when a share completes: the
+// OS never tells us whether anything was actually sent, and a number that only
+// counts confirmed sends would undercount every WhatsApp forward on the
+// platform. It measures intent, and is only ever used as a ranking signal.
+export const recordShare = asyncHandler(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) throw new AppError('Pin not found.', 404);
+  await Pin.updateOne({ _id: req.params.id, status: 'active' }, { $inc: { 'counters.shares': 1 } });
+  res.status(204).end();
+});
+
 // ── POST /pins/:id/view ───────────────────────────────────────────────────────
 // Counted when a pin is actually opened, not when it scrolls past in a grid: a
 // view has to mean something for the save-through rate to mean anything.
@@ -269,13 +334,17 @@ export const recordView = asyncHandler(async (req, res) => {
 // only moves when the membership actually changed.
 export const likePin = asyncHandler(async (req, res) => {
   const profile = await myProfile(req.user.id);
-  const pin = await Pin.findById(req.params.id).select('_id status');
+  const pin = await Pin.findById(req.params.id).select('_id status author title');
   if (!pin || pin.status !== 'active') throw new AppError('Pin not found.', 404);
 
   const existing = await PinLike.findOne({ pinId: pin._id, owner: profile._id });
   if (!existing) {
     await PinLike.create({ pinId: pin._id, owner: profile._id });
     await Pin.updateOne({ _id: pin._id }, { $inc: { 'counters.likes': 1 } });
+    // Only on the transition. Re-liking an already-liked pin is idempotent and
+    // must not ping the maker a second time.
+    const actor = await Profile.findById(profile._id).select('_id fullName').lean();
+    await notifyPinLiked(req, { actor, pin });
   }
 
   const fresh = await Pin.findById(pin._id).select('counters.likes').lean();
@@ -332,7 +401,7 @@ export const listComments = asyncHandler(async (req, res) => {
 // ── POST /pins/:id/comments ───────────────────────────────────────────────────
 export const addComment = asyncHandler(async (req, res) => {
   const profile = await myProfile(req.user.id);
-  const pin = await Pin.findById(req.params.id).select('_id status');
+  const pin = await Pin.findById(req.params.id).select('_id status author title');
   if (!pin || pin.status !== 'active') throw new AppError('Pin not found.', 404);
 
   const body = String(req.body.body ?? '').trim();
@@ -340,6 +409,9 @@ export const addComment = asyncHandler(async (req, res) => {
 
   const created = await PinComment.create({ pinId: pin._id, author: profile._id, body });
   await Pin.updateOne({ _id: pin._id }, { $inc: { 'counters.comments': 1 } });
+
+  const actor = await Profile.findById(profile._id).select('_id fullName').lean();
+  await notifyPinCommented(req, { actor, pin, comment: body });
 
   const comment = await PinComment.findById(created._id)
     .populate('author', 'fullName avatarUrl role')

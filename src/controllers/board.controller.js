@@ -2,11 +2,17 @@ import asyncHandler from '../utils/asyncHandler.js';
 import AppError from '../utils/AppError.js';
 import Board from '../models/Board.js';
 import BoardFollow from '../models/BoardFollow.js';
+import BoardLike from '../models/BoardLike.js';
 import BoardPin from '../models/BoardPin.js';
 import Pin from '../models/Pin.js';
 import Profile from '../models/Profile.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import { resolvePinAlbum, resolveUploadUrl } from '../utils/resolveUrl.js';
+import {
+  notifyBoardFollowed,
+  notifyBoardLiked,
+  notifyPinSaved,
+} from '../services/feedNotify.service.js';
 
 const myProfile = async (userId) => {
   const profile = await Profile.findOne({ userId }).select('_id');
@@ -122,6 +128,9 @@ export const followBoard = asyncHandler(async (req, res) => {
     { $setOnInsert: { follower: profile._id, board: board._id } },
     { upsert: true }
   );
+  const actor = await Profile.findById(profile._id).select('_id fullName').lean();
+  await notifyBoardFollowed(req, { actor, board });
+
   const followerCount = await BoardFollow.countDocuments({ board: board._id });
   res.status(200).json({ success: true, data: { followedByMe: true, followerCount } });
 });
@@ -131,6 +140,34 @@ export const unfollowBoard = asyncHandler(async (req, res) => {
   await BoardFollow.deleteOne({ follower: profile._id, board: req.params.id });
   const followerCount = await BoardFollow.countDocuments({ board: req.params.id });
   res.status(200).json({ success: true, data: { followedByMe: false, followerCount } });
+});
+
+// ── POST/DELETE /boards/:id/like ──────────────────────────────────────────────
+// Separate from following on purpose. Following is a subscription and changes
+// your feed; liking is applause and changes what gets featured. Without both, a
+// user cannot say "this collection is good" without committing to see more of
+// it forever.
+export const likeBoard = asyncHandler(async (req, res) => {
+  const profile = await myProfile(req.user.id);
+  const board = await Board.findById(req.params.id).select('_id owner name isPrivate');
+  if (!board || board.isPrivate) throw new AppError('Board not found.', 404);
+
+  const existing = await BoardLike.findOne({ owner: profile._id, board: board._id });
+  if (!existing) {
+    await BoardLike.create({ owner: profile._id, board: board._id });
+    const actor = await Profile.findById(profile._id).select('_id fullName').lean();
+    await notifyBoardLiked(req, { actor, board });
+  }
+
+  const likeCount = await BoardLike.countDocuments({ board: board._id });
+  res.status(200).json({ success: true, data: { likedByMe: true, likeCount } });
+});
+
+export const unlikeBoard = asyncHandler(async (req, res) => {
+  const profile = await myProfile(req.user.id);
+  await BoardLike.deleteOne({ owner: profile._id, board: req.params.id });
+  const likeCount = await BoardLike.countDocuments({ board: req.params.id });
+  res.status(200).json({ success: true, data: { likedByMe: false, likeCount } });
 });
 
 // ── GET /boards/saved ─────────────────────────────────────────────────────────
@@ -284,7 +321,7 @@ export const getBoard = asyncHandler(async (req, res) => {
       media: resolvePinAlbum(p.media),
     }));
 
-  const [followerCount, followedByMe] = await Promise.all([
+  const [followerCount, followedByMe, likeCount, likedByMe] = await Promise.all([
     BoardFollow.countDocuments({ board: board._id }),
     req.user
       ? Profile.findOne({ userId: req.user.id })
@@ -292,11 +329,26 @@ export const getBoard = asyncHandler(async (req, res) => {
           .lean()
           .then((p) => (p ? BoardFollow.exists({ follower: p._id, board: board._id }) : null))
       : null,
+    BoardLike.countDocuments({ board: board._id }),
+    req.user
+      ? Profile.findOne({ userId: req.user.id })
+          .select('_id')
+          .lean()
+          .then((p) => (p ? BoardLike.exists({ owner: p._id, board: board._id }) : null))
+      : null,
   ]);
 
   res.status(200).json({
     success: true,
-    data: { board, pins, isOwner, followerCount, followedByMe: !!followedByMe },
+    data: {
+      board,
+      pins,
+      isOwner,
+      followerCount,
+      followedByMe: !!followedByMe,
+      likeCount,
+      likedByMe: !!likedByMe,
+    },
     pagination: buildPaginationMeta(total, page, limit),
   });
 });
@@ -327,6 +379,9 @@ export const savePinToBoard = asyncHandler(async (req, res) => {
       { $inc: { pinCount: 1 }, $set: { coverUrl: pin.mediaUrl } }
     ),
   ]);
+
+  const actor = await Profile.findById(profile._id).select('_id fullName').lean();
+  await notifyPinSaved(req, { actor, pin, boardName: board.name });
 
   res.status(201).json({ success: true, data: { saved: true }, message: 'Saved.' });
 });

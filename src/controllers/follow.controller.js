@@ -2,6 +2,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import AppError from '../utils/AppError.js';
 import Follow from '../models/Follow.js';
 import Profile from '../models/Profile.js';
+import { notifyFollowed } from '../services/feedNotify.service.js';
 
 const myProfile = async (userId) => {
   const profile = await Profile.findOne({ userId }).select('_id');
@@ -26,6 +27,9 @@ export const follow = asyncHandler(async (req, res) => {
   } catch (err) {
     if (err.code !== 11000) throw err; // already following — idempotent
   }
+  const actor = await Profile.findById(me._id).select('_id fullName').lean();
+  await notifyFollowed(req, { actor, followedProfileId: target._id });
+
   const followers = await Follow.countDocuments({ followed: target._id });
   res.status(200).json({ success: true, data: { isFollowing: true, followers }, message: 'Following.' });
 });

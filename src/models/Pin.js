@@ -69,6 +69,9 @@ const pinSchema = new mongoose.Schema(
       saves: { type: Number, default: 0, min: 0 },
       likes: { type: Number, default: 0, min: 0 },
       comments: { type: Number, default: 0, min: 0 },
+      // Counts share-sheet opens, not confirmed sends: the OS never reports
+      // whether anything was actually sent. A ranking signal, never a claim.
+      shares: { type: Number, default: 0, min: 0 },
       // Schema-only in v1 — tracking endpoint lands in P2 (DECISIONS 2026-07-27).
       views: { type: Number, default: 0, min: 0 },
     },

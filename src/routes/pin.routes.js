@@ -15,6 +15,9 @@ import {
   likePin,
   unlikePin,
   recordView,
+  mutePin,
+  unmutePin,
+  recordShare,
   listComments,
   addComment,
   deleteComment,
@@ -31,6 +34,9 @@ router.delete('/comments/:commentId', protect, deleteComment);
 router.get('/:id', optionalAuth, getPin);   // GET /pins/:id — public (savedByMe/likedByMe when authed)
 
 router.post('/:id/view', recordView);       // public: ranking signal, nothing more
+router.post('/:id/share', recordShare);     // public: counts intent to share
+router.post('/:id/mute', protect, mutePin);
+router.delete('/:id/mute', protect, unmutePin);
 router.post('/:id/like', protect, likePin);
 router.delete('/:id/like', protect, unlikePin);
 router.post('/:id/comments', protect, addComment);
