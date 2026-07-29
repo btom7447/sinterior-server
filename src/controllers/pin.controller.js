@@ -5,16 +5,11 @@ import Pin from '../models/Pin.js';
 import Profile from '../models/Profile.js';
 import Follow from '../models/Follow.js';
 import BoardPin from '../models/BoardPin.js';
-import PinComment from '../models/PinComment.js';
 import PinLike from '../models/PinLike.js';
 import PinMute from '../models/PinMute.js';
 import { TRADES, ROOMS, BUDGET_BANDS } from '../config/taxonomy.js';
 import { TAG_VOCABULARY, deriveTags, sanitizeTags } from '../config/vocabulary.js';
-import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
-import {
-  notifyPinCommented,
-  notifyPinLiked,
-} from '../services/feedNotify.service.js';
+import { notifyPinLiked } from '../services/feedNotify.service.js';
 import {
   createDirectUpload,
   deleteVideo,
@@ -371,91 +366,7 @@ export const unlikePin = asyncHandler(async (req, res) => {
   });
 });
 
-// ── GET /pins/:id/comments ────────────────────────────────────────────────────
-export const listComments = asyncHandler(async (req, res) => {
-  const { page, limit, skip } = getPagination(req.query);
-  const filter = { pinId: req.params.id, status: 'active' };
-
-  const [comments, total] = await Promise.all([
-    PinComment.find(filter)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .populate('author', 'fullName avatarUrl role')
-      .lean(),
-    PinComment.countDocuments(filter),
-  ]);
-
-  const data = comments.map((c) => ({
-    ...c,
-    author: c.author ? { ...c.author, avatarUrl: resolveUploadUrl(c.author.avatarUrl) } : null,
-  }));
-
-  res.status(200).json({
-    success: true,
-    data: { comments: data },
-    pagination: buildPaginationMeta(total, page, limit),
-  });
-});
-
-// ── POST /pins/:id/comments ───────────────────────────────────────────────────
-export const addComment = asyncHandler(async (req, res) => {
-  const profile = await myProfile(req.user.id);
-  const pin = await Pin.findById(req.params.id).select('_id status author title');
-  if (!pin || pin.status !== 'active') throw new AppError('Pin not found.', 404);
-
-  const body = String(req.body.body ?? '').trim();
-  if (!body) throw new AppError('Write something first.', 400);
-
-  const created = await PinComment.create({ pinId: pin._id, author: profile._id, body });
-  await Pin.updateOne({ _id: pin._id }, { $inc: { 'counters.comments': 1 } });
-
-  const actor = await Profile.findById(profile._id).select('_id fullName').lean();
-  await notifyPinCommented(req, { actor, pin, comment: body });
-
-  const comment = await PinComment.findById(created._id)
-    .populate('author', 'fullName avatarUrl role')
-    .lean();
-
-  res.status(201).json({
-    success: true,
-    data: {
-      comment: {
-        ...comment,
-        author: comment.author
-          ? { ...comment.author, avatarUrl: resolveUploadUrl(comment.author.avatarUrl) }
-          : null,
-      },
-    },
-    message: 'Comment posted.',
-  });
-});
-
-// ── DELETE /pins/comments/:commentId ──────────────────────────────────────────
-// The comment's author, the pin's author, or an admin. A pin owner needs to be
-// able to clear their own wall without waiting on moderation.
-export const deleteComment = asyncHandler(async (req, res) => {
-  const comment = await PinComment.findById(req.params.commentId);
-  if (!comment || comment.status === 'removed') throw new AppError('Comment not found.', 404);
-
-  const profile = await Profile.findOne({ userId: req.user.id }).select('_id');
-  const pin = await Pin.findById(comment.pinId).select('author');
-  const mine = profile && comment.author.toString() === profile._id.toString();
-  const myPin = profile && pin && pin.author.toString() === profile._id.toString();
-  if (!mine && !myPin && req.user.role !== 'admin') {
-    throw new AppError('You cannot remove this comment.', 403);
-  }
-
-  comment.status = 'removed';
-  await comment.save();
-  await Pin.updateOne(
-    { _id: comment.pinId, 'counters.comments': { $gt: 0 } },
-    { $inc: { 'counters.comments': -1 } }
-  );
-
-  res.status(200).json({ success: true, data: null, message: 'Comment removed.' });
-});
-
+// ── Comments ──────────────────────────────────────────────────────────────────
 // ── POST /pins/upload ─────────────────────────────────────────────────────────
 // Photos for a pin, in one request, so an album is one upload rather than ten.
 // Returns URLs only: the pin itself is created in a second call once the maker

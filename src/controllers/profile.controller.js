@@ -6,8 +6,34 @@ import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
 
 import { resolveUploadUrl } from '../utils/resolveUrl.js';
+import escapeRegex from '../utils/escapeRegex.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// ── GET /api/v1/profiles/search?q= ────────────────────────────────────────────
+// Feeds the @mention picker in comments. Deliberately narrow: names, avatars
+// and roles only — enough to pick the right person out of a list and nothing
+// that would turn the directory into an export.
+export const searchProfiles = asyncHandler(async (req, res) => {
+  const q = String(req.query.q ?? '').trim();
+  if (q.length < 1) return sendSuccess(res, { profiles: [] }, 'Profiles retrieved.');
+
+  const pattern = new RegExp(escapeRegex(q), 'i');
+  const profiles = await Profile.find({ fullName: pattern })
+    .select('fullName avatarUrl role')
+    .limit(20)
+    .lean();
+
+  // Someone typing "ade" means Adeola before Folasade. Ordering happens here
+  // rather than in the query because it needs both matches to compare.
+  const starts = (p) => (p.fullName?.toLowerCase().startsWith(q.toLowerCase()) ? 0 : 1);
+  const ranked = profiles
+    .sort((a, b) => starts(a) - starts(b) || (a.fullName ?? '').localeCompare(b.fullName ?? ''))
+    .slice(0, 8)
+    .map((p) => ({ ...p, avatarUrl: resolveUploadUrl(p.avatarUrl) }));
+
+  sendSuccess(res, { profiles: ranked }, 'Profiles retrieved.');
+});
 
 // ── GET /api/v1/profiles/me ───────────────────────────────────────────────────
 export const getMe = asyncHandler(async (req, res) => {

@@ -39,6 +39,7 @@ import Order from '../models/Order.js';
 import PayoutRequest from '../models/PayoutRequest.js';
 import Pin from '../models/Pin.js';
 import PinComment from '../models/PinComment.js';
+import CommentLike from '../models/CommentLike.js';
 import PinLike from '../models/PinLike.js';
 import Profile from '../models/Profile.js';
 import User from '../models/User.js';
@@ -108,6 +109,14 @@ export async function deleteAccount({ userId, profileId }) {
     Pin.updateMany({ author: profileId }, { $set: { status: 'removed' } }),
     PinComment.updateMany({ author: profileId }, { $set: { status: 'removed' } }),
     PinLike.deleteMany({ owner: profileId }),
+    CommentLike.deleteMany({ owner: profileId }),
+    // Mentions of a leaving user are stripped from everyone else's comments;
+    // the text keeps the name they typed, but it stops resolving to a person.
+    PinComment.updateMany({ mentions: profileId }, { $pull: { mentions: profileId } }),
+    // Reports they filed are left alone. A moderation queue that empties itself
+    // when the reporter leaves is how the worst content survives, and the
+    // reporter reference already resolves to the emptied profile below rather
+    // than to a name.
     BoardPin.deleteMany({ owner: profileId }),
     boardIds.length ? BoardPin.deleteMany({ boardId: { $in: boardIds } }) : Promise.resolve(),
     Board.deleteMany({ owner: profileId }),

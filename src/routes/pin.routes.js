@@ -18,10 +18,16 @@ import {
   mutePin,
   unmutePin,
   recordShare,
-  listComments,
-  addComment,
-  deleteComment,
 } from '../controllers/pin.controller.js';
+import {
+  listComments,
+  listReplies,
+  addComment,
+  likeComment,
+  unlikeComment,
+  deleteComment,
+  reportPin,
+} from '../controllers/comment.controller.js';
 
 const router = Router();
 
@@ -29,7 +35,12 @@ router.get('/taxonomy', getTaxonomy);
 router.get('/taxonomy/covers', getTradeCovers); // real imagery per trade      // GET /pins/taxonomy — trades/rooms/bands
 router.get('/feed', optionalAuth, getFeed); // GET /pins/feed — public, personalized when authed
 // Comments read publicly; the literal path must beat the /:id wildcard.
-router.get('/:id/comments', listComments);
+// optionalAuth so likedByMe comes back for a signed-in reader without shutting
+// a signed-out one out of the thread.
+router.get('/:id/comments', optionalAuth, listComments);
+router.get('/comments/:commentId/replies', optionalAuth, listReplies);
+router.post('/comments/:commentId/like', protect, likeComment);
+router.delete('/comments/:commentId/like', protect, unlikeComment);
 router.delete('/comments/:commentId', protect, deleteComment);
 router.get('/:id', optionalAuth, getPin);   // GET /pins/:id — public (savedByMe/likedByMe when authed)
 
@@ -40,6 +51,7 @@ router.delete('/:id/mute', protect, unmutePin);
 router.post('/:id/like', protect, likePin);
 router.delete('/:id/like', protect, unlikePin);
 router.post('/:id/comments', protect, addComment);
+router.post('/:id/report', protect, reportPin);
 
 router.post(
   '/upload',

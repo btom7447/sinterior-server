@@ -92,6 +92,54 @@ export async function notifyPinCommented(req, { actor, pin, comment }) {
   });
 }
 
+export async function notifyCommentReply(req, { actor, pin, parentAuthorId, comment }) {
+  await notify(req, {
+    actorId: actor?._id,
+    recipientId: parentAuthorId,
+    type: 'comment_reply',
+    title: 'Someone replied to you',
+    body: `${nameOf(actor)}: ${short(comment, 90)}`,
+    data: { pinId: String(pin._id) },
+  });
+}
+
+export async function notifyCommentLiked(req, { actor, pin, commentAuthorId, comment }) {
+  await notify(req, {
+    actorId: actor?._id,
+    recipientId: commentAuthorId,
+    type: 'comment_like',
+    title: 'Your comment was liked',
+    body: `${nameOf(actor)} liked "${short(comment, 60)}".`,
+    data: { pinId: String(pin._id) },
+  });
+}
+
+/**
+ * Being named in a comment. Sent per mentioned profile, and deliberately last
+ * at the call site: someone who is both replied to and mentioned in the same
+ * comment gets the reply notification, and this skips them rather than
+ * buzzing the same phone twice for one sentence.
+ */
+export async function notifyMentioned(req, { actor, pin, mentionedIds, comment, skipIds = [] }) {
+  const skip = new Set(skipIds.filter(Boolean).map(String));
+  const seen = new Set();
+
+  for (const id of mentionedIds ?? []) {
+    const key = String(id);
+    if (!key || skip.has(key) || seen.has(key)) continue;
+    seen.add(key);
+
+    await notify(req, {
+      actorId: actor?._id,
+      recipientId: id,
+      type: 'comment_mention',
+      title: 'You were mentioned',
+      body: `${nameOf(actor)}: ${short(comment, 90)}`,
+      data: { pinId: String(pin._id) },
+    });
+  }
+}
+
 export async function notifyFollowed(req, { actor, followedProfileId }) {
   await notify(req, {
     actorId: actor?._id,
