@@ -31,6 +31,56 @@ export const TRADES = [
   'acoustic',
 ];
 
+/**
+ * Artisan skill categories, as stored on ArtisanProfile, mapped to trade ids.
+ *
+ * The two lists were always the same nineteen things wearing different clothes:
+ * the client writes the display name ("Painting & Finishing") into
+ * `skillCategory`, older records wrote the id ("wall-decoration"), and the Pin
+ * taxonomy only ever speaks ids. Without this, a pin authored by an artisan who
+ * has already declared their trade still shows up untagged.
+ *
+ * Keep in sync with sinterior-client ARTISAN_SKILL_CATEGORIES until the client
+ * fetches the taxonomy instead of hardcoding it.
+ */
+export const TRADE_BY_SKILL_CATEGORY = {
+  'Carpentry & Woodworking': 'carpentry',
+  'Masonry, Stone & Concrete Work': 'masonry',
+  'Metalwork & Fabrication': 'metalwork',
+  'Painting & Finishing': 'painting',
+  Ceilings: 'ceilings',
+  'Wall Decoration': 'wall-decoration',
+  'Flooring & Tiling': 'flooring',
+  'Electrical & Lighting': 'electrical',
+  'Plumbing & Water Features': 'plumbing',
+  'Roofing & Exterior Work': 'roofing',
+  'Landscaping & Outdoor Decor': 'landscaping',
+  'Curtains & Window Treatments': 'curtains',
+  'Toilet, Bathroom & Kitchen Solutions': 'bathroom-kitchen',
+  'Aluco Board / ACP Applications': 'acp',
+  'Industrial Cleaning': 'cleaning',
+  'Regional & Traditional Styles': 'traditional',
+  'Modern & Innovative Techniques': 'modern',
+  'Tools & Technical Skills': 'tools',
+  'Acoustic & Functional Integration': 'acoustic',
+};
+
+/**
+ * Resolve whatever is sitting in `skillCategory` to a trade id: an id already,
+ * a display name, or a display name in the wrong case. Returns null when it is
+ * none of those, rather than guessing.
+ */
+export const tradeForSkillCategory = (value) => {
+  if (!value || typeof value !== 'string') return null;
+  const raw = value.trim();
+  if (TRADES.includes(raw)) return raw;
+  if (TRADE_BY_SKILL_CATEGORY[raw]) return TRADE_BY_SKILL_CATEGORY[raw];
+
+  const lower = raw.toLowerCase();
+  const hit = Object.entries(TRADE_BY_SKILL_CATEGORY).find(([name]) => name.toLowerCase() === lower);
+  return hit ? hit[1] : null;
+};
+
 export const ROOMS = [
   'living-room',
   'bedroom',
