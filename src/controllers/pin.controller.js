@@ -605,6 +605,30 @@ async function fileOnDefaultBoard(pin) {
   ]);
 }
 
+// ── POST /pins/:id/unpublish ──────────────────────────────────────────────────
+// Back to a draft. The alternative for a maker who posted the wrong photograph
+// is deleting the pin and starting again, which loses the comments, the saves
+// and the upload — so this exists to make a mistake recoverable rather than
+// terminal.
+//
+// It stays on whatever boards hold it. Other people's boards are theirs, and
+// quietly emptying them because an author is editing would be a strange thing
+// to do to a stranger.
+export const unpublishPin = asyncHandler(async (req, res) => {
+  const { pin } = await requireOwnPin(req, '_id author status');
+  if (pin.status === 'draft') throw new AppError('That pin is already a draft.', 400);
+  if (pin.status !== 'active') throw new AppError('Pin not found.', 404);
+
+  pin.status = 'draft';
+  await pin.save();
+
+  res.status(200).json({
+    success: true,
+    data: { pin },
+    message: 'Moved back to your drafts.',
+  });
+});
+
 // ── POST /pins/:id/duplicate ──────────────────────────────────────────────────
 // Copies a pin into a fresh draft. The use is a maker who shoots one job in
 // several rooms: the trade, the tags and the media are the same and only the

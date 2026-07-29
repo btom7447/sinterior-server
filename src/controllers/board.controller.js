@@ -227,9 +227,12 @@ export const getSavedPins = asyncHandler(async (req, res) => {
 
   // Restore the save order the aggregation established.
   const pins = rows
-    .map((r) => byId.get(r._id.toString()))
+    .map((r) => {
+      const pin = byId.get(r._id.toString());
+      return pin ? { pin, pinnedAt: r.pinnedAt ?? null } : null;
+    })
     .filter(Boolean)
-    .map((p) => ({
+    .map(({ pin: p, pinnedAt }) => ({
       ...p,
       mediaUrl: resolveUploadUrl(p.mediaUrl),
       posterUrl: p.posterUrl ? resolveUploadUrl(p.posterUrl) : undefined,
@@ -237,6 +240,10 @@ export const getSavedPins = asyncHandler(async (req, res) => {
       author: p.author
         ? { ...p.author, avatarUrl: resolveUploadUrl(p.author.avatarUrl) }
         : null,
+      // Carried onto the pin so a card can show it is pinned without the grid
+      // having to hold a second list of which ones are.
+      pinnedAt,
+      savedByMe: true,
     }));
 
   res.status(200).json({
