@@ -96,6 +96,44 @@ export default function initSocket(server) {
     // Notify contacts that this user is online
     socket.broadcast.emit('user:online', { profileId });
 
+    /**
+     * Everything sent to this person while they were away is delivered now.
+     *
+     * Delivery is "reached their device", and a socket connecting is the only
+     * moment the server can honestly claim that. Senders are told per
+     * conversation rather than per message, because a tick is drawn from the
+     * last message in a thread and one event per message would be a hundred
+     * emits for somebody opening the app after a weekend.
+     */
+    (async () => {
+      try {
+        const waiting = await Message.find({ receiverId: profileId, status: 'sent' })
+          .select('conversationId senderId')
+          .lean();
+        if (!waiting.length) return;
+
+        await Message.updateMany(
+          { receiverId: profileId, status: 'sent' },
+          { $set: { status: 'delivered', deliveredAt: new Date() } }
+        );
+
+        const bySender = new Map();
+        for (const m of waiting) {
+          const key = String(m.senderId);
+          if (!bySender.has(key)) bySender.set(key, new Set());
+          bySender.get(key).add(m.conversationId);
+        }
+        for (const [senderId, conversationIds] of bySender) {
+          emitToUser(io, senderId, 'message:delivered', {
+            conversationIds: [...conversationIds],
+            to: profileId,
+          });
+        }
+      } catch {
+        // A missed delivery tick is cosmetic; the message itself is safe.
+      }
+    })();
+
     // ── Send message ──────────────────────────────────────────────────────
     socket.on('message:send', async (data, ack) => {
       try {
@@ -116,12 +154,19 @@ export default function initSocket(server) {
 
         const conversationId = buildConversationId(profileId, receiverId);
 
+        // Online means it lands on their device now, so it is born delivered.
+        // Claiming otherwise would leave one tick on a message the recipient is
+        // already looking at.
+        const online = isOnline(receiverId);
+
         const message = await Message.create({
           conversationId,
           senderId: profileId,
           receiverId,
           content: content.trim().slice(0, 2000),
           isRead: false,
+          status: online ? 'delivered' : 'sent',
+          deliveredAt: online ? new Date() : null,
         });
 
         const messageData = {
@@ -131,6 +176,7 @@ export default function initSocket(server) {
           receiverId: { _id: receiver._id, fullName: receiver.fullName, avatarUrl: resolveUploadUrl(receiver.avatarUrl) },
           content: message.content,
           isRead: false,
+          status: message.status,
           createdAt: message.createdAt,
         };
 
@@ -158,7 +204,7 @@ export default function initSocket(server) {
 
         await Message.updateMany(
           { conversationId, receiverId: profileId, isRead: false },
-          { $set: { isRead: true } }
+          { $set: { isRead: true, status: 'read', readAt: new Date() } }
         );
 
         // Notify the other party that messages were read

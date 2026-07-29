@@ -33,6 +33,27 @@ const messageSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+
+    /**
+     * How far along a message has got, for the tick beside it.
+     *
+     * sent      — accepted by the server. One tick.
+     * delivered — reached the recipient's device. Two ticks.
+     * read      — they opened the thread. Two ticks, coloured.
+     *
+     * A boolean cannot express this: "not read" covers both "still in the air"
+     * and "sitting on their phone unopened", and those are the two states a
+     * sender most wants told apart. isRead stays as the source of truth for
+     * unread counts, which are counted by query all over the app.
+     */
+    status: {
+      type: String,
+      enum: ['sent', 'delivered', 'read'],
+      default: 'sent',
+      index: true,
+    },
+    deliveredAt: { type: Date, default: null },
+    readAt: { type: Date, default: null },
   },
   {
     timestamps: true,
@@ -63,6 +84,8 @@ messageSchema.pre('validate', function (next) {
 messageSchema.index({ conversationId: 1, createdAt: -1 });
 messageSchema.index({ senderId: 1 });
 messageSchema.index({ receiverId: 1, isRead: 1 });
+// Finding what to mark delivered the moment a recipient reconnects.
+messageSchema.index({ receiverId: 1, status: 1 });
 
 const Message = mongoose.model('Message', messageSchema);
 

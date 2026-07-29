@@ -87,6 +87,10 @@ export const getConversations = asyncHandler(async (req, res) => {
           content: '$lastMessage.content',
           createdAt: '$lastMessage.createdAt',
           isRead: '$lastMessage.isRead',
+          // The tick on a conversation row is drawn from the last message, and
+          // only when that message is one of ours.
+          status: '$lastMessage.status',
+          hasMedia: { $gt: [{ $size: { $ifNull: ['$lastMessage.media', []] } }, 0] },
           senderId: '$lastMessage.senderId',
         },
         unreadCount: 1,
@@ -175,7 +179,7 @@ export const getMessages = asyncHandler(async (req, res) => {
   // Mark all unread messages sent TO this user as read
   await Message.updateMany(
     { conversationId, receiverId: profile._id, isRead: false },
-    { $set: { isRead: true } }
+    { $set: { isRead: true, status: 'read', readAt: new Date() } }
   );
 
   const [total, messages] = await Promise.all([
@@ -259,6 +263,7 @@ export const sendMessage = asyncHandler(async (req, res) => {
       content: message.content,
       media: resolvedMedia.length > 0 ? resolvedMedia : undefined,
       isRead: false,
+      status: message.status,
       createdAt: message.createdAt,
     };
 
