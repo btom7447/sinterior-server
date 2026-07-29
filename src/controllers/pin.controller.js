@@ -10,6 +10,12 @@ import PinLike from '../models/PinLike.js';
 import { TRADES, ROOMS, BUDGET_BANDS } from '../config/taxonomy.js';
 import { TAG_VOCABULARY, deriveTags, sanitizeTags } from '../config/vocabulary.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
+import {
+  createDirectUpload,
+  deleteVideo,
+  getVideo,
+  MAX_VIDEO_SECONDS,
+} from '../services/stream.service.js';
 import { resolvePinAlbum, resolveUploadUrl } from '../utils/resolveUrl.js';
 
 const FEED_LIMIT_MAX = 50;
@@ -393,6 +399,29 @@ export const uploadPinMedia = asyncHandler(async (req, res) => {
   });
 });
 
+// ── POST /pins/upload/video ───────────────────────────────────────────────────
+// Hands back a one-time Cloudflare URL for the phone to upload straight to.
+// The file never touches this server: 60MB through Railway would be slow, would
+// occupy the dyno for the duration, and would gain nothing.
+export const createVideoUpload = asyncHandler(async (req, res) => {
+  const profile = await myProfile(req.user.id);
+  const { uid, uploadUrl } = await createDirectUpload({ creator: profile._id.toString() });
+
+  res.status(200).json({
+    success: true,
+    data: { uid, uploadUrl, maxDurationSeconds: MAX_VIDEO_SECONDS },
+    message: 'Upload URL created.',
+  });
+});
+
+// ── GET /pins/upload/video/:uid ───────────────────────────────────────────────
+// Transcoding takes time proportional to length, so the client polls this
+// instead of an upload request hanging open for a minute.
+export const getVideoStatus = asyncHandler(async (req, res) => {
+  const video = await getVideo(req.params.uid);
+  res.status(200).json({ success: true, data: video });
+});
+
 // ── POST /pins ────────────────────────────────────────────────────────────────
 // Native creation (artisan/supplier). M0 accepts already-uploaded Cloudinary
 // URLs; M1 adds the dedicated upload flow with server-side dimension capture.
@@ -405,17 +434,40 @@ export const createPin = asyncHandler(async (req, res) => {
   // Albums arrive as media[]; a single item may still arrive the old way. Both
   // end up stored the same: media[] holds the set, and the flat fields mirror
   // its first entry so nothing downstream has to branch.
-  const album = Array.isArray(req.body.media)
-    ? req.body.media
-        .filter((m) => m && typeof m.url === 'string' && m.url.trim())
-        .slice(0, 10)
-        .map((m) => ({
-          type: m.type === 'video' ? 'video' : 'image',
-          url: m.url.trim(),
-          posterUrl: m.posterUrl,
-          aspectRatio: typeof m.aspectRatio === 'number' ? m.aspectRatio : 1,
-        }))
-    : [];
+  //
+  // Video entries carry a `videoUid` rather than a url. The playback and poster
+  // addresses are read back from Cloudflare rather than trusted from the
+  // client, so a caller cannot point a "video" at an arbitrary URL, and a pin
+  // cannot be created for a video that failed to transcode.
+  const raw = Array.isArray(req.body.media) ? req.body.media.slice(0, 10) : [];
+  const album = [];
+
+  for (const item of raw) {
+    if (!item) continue;
+
+    if (item.type === 'video' && item.videoUid) {
+      const video = await getVideo(String(item.videoUid));
+      if (!video.ready || !video.playbackUrl) {
+        throw new AppError('That video is still processing. Try again in a moment.', 409);
+      }
+      album.push({
+        type: 'video',
+        url: video.playbackUrl,
+        posterUrl: video.posterUrl ?? undefined,
+        aspectRatio: typeof item.aspectRatio === 'number' ? item.aspectRatio : 1,
+      });
+      continue;
+    }
+
+    if (typeof item.url === 'string' && item.url.trim()) {
+      album.push({
+        type: 'image',
+        url: item.url.trim(),
+        posterUrl: item.posterUrl,
+        aspectRatio: typeof item.aspectRatio === 'number' ? item.aspectRatio : 1,
+      });
+    }
+  }
 
   const lead = album[0];
   const primaryUrl = lead?.url ?? mediaUrl;
@@ -498,6 +550,16 @@ export const deletePin = asyncHandler(async (req, res) => {
 
   pin.status = 'removed';
   await pin.save();
+
+  // Pins are soft-deleted so moderation keeps the record, but video is not:
+  // Cloudflare bills for stored minutes, and a removed pin's video will never
+  // be watched again. The uid is recoverable from the playback URL.
+  for (const item of pin.media ?? []) {
+    if (item.type !== 'video' || !item.url) continue;
+    const uid = item.url.match(/cloudflarestream\.com\/([^/]+)\//)?.[1];
+    if (uid) await deleteVideo(uid);
+  }
+
   res.status(200).json({ success: true, data: null, message: 'Pin removed.' });
 });
 

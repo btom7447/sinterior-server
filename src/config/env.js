@@ -73,6 +73,18 @@ const config = Object.freeze({
 
   PAYSTACK_SECRET_KEY: process.env.PAYSTACK_SECRET_KEY || '',
   PAYSTACK_PUBLIC_KEY: process.env.PAYSTACK_PUBLIC_KEY || '',
+
+  // Cloudflare Stream — video only.
+  //
+  // Images stay on Cloudinary: the entire metered-data strategy rests on its
+  // on-the-fly resizing (w_400,q_auto,f_auto — see lib/img.ts in the app), and
+  // nothing in the Cloudflare video products replaces that.
+  //
+  // Stream is chosen over plain R2 storage because it transcodes. Without
+  // transcoding a 60-second phone clip is 60-100MB and every viewer downloads
+  // all of it, which is a cost borne by the user's data plan rather than ours.
+  CLOUDFLARE_ACCOUNT_ID: process.env.CLOUDFLARE_ACCOUNT_ID || '',
+  CLOUDFLARE_STREAM_TOKEN: process.env.CLOUDFLARE_STREAM_TOKEN || '',
 });
 
 export default config;

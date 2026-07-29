@@ -8,6 +8,8 @@ import {
   getPin,
   createPin,
   uploadPinMedia,
+  createVideoUpload,
+  getVideoStatus,
   updatePin,
   deletePin,
   likePin,
@@ -41,6 +43,11 @@ router.post(
   resizeImage(1400, 0, 85),
   uploadPinMedia
 );
+
+// Video goes phone → Cloudflare directly; this only issues the one-time URL and
+// reports transcoding progress.
+router.post('/upload/video', protect, restrictTo('artisan', 'supplier'), createVideoUpload);
+router.get('/upload/video/:uid', protect, getVideoStatus);
 router.post('/', protect, restrictTo('artisan', 'supplier'), createPin);
 router.patch('/:id', protect, updatePin);   // owner or admin (checked in controller)
 router.delete('/:id', protect, deletePin);  // owner or admin (soft delete)
