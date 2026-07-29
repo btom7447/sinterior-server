@@ -1,6 +1,19 @@
 import { Router } from 'express';
 import { body } from 'express-validator';
-import { register, login, refresh, logout, me, forgotPassword, resetPassword, changePassword, sendVerification, verifyEmail } from '../controllers/auth.controller.js';
+import {
+  register,
+  login,
+  refresh,
+  logout,
+  me,
+  forgotPassword,
+  requestPasswordCode,
+  resetPasswordWithCode,
+  resetPassword,
+  changePassword,
+  sendVerification,
+  verifyEmail,
+} from '../controllers/auth.controller.js';
 import { protect } from '../middleware/auth.js';
 import { authLimiter } from '../middleware/rateLimiter.js';
 import validate from '../middleware/validate.js';
@@ -89,6 +102,33 @@ router.post(
   [body('email').isEmail().withMessage('A valid email address is required').normalizeEmail()],
   validate,
   forgotPassword
+);
+
+// ── POST /api/v1/auth/forgot-password/code ────────────────────────────────────
+// The app's reset: a code by email, entered in the app. No browser hop.
+router.post(
+  '/forgot-password/code',
+  authLimiter,
+  [body('email').isEmail().withMessage('A valid email address is required').normalizeEmail()],
+  validate,
+  requestPasswordCode
+);
+
+// ── POST /api/v1/auth/reset-password/code ─────────────────────────────────────
+router.post(
+  '/reset-password/code',
+  authLimiter,
+  [
+    body('email').isEmail().withMessage('A valid email address is required').normalizeEmail(),
+    body('code').isLength({ min: 6, max: 6 }).withMessage('Enter the six-digit code'),
+    body('password')
+      .isLength({ min: 8 })
+      .withMessage('Password must be at least 8 characters')
+      .matches(/d/)
+      .withMessage('Password must contain at least one number'),
+  ],
+  validate,
+  resetPasswordWithCode
 );
 
 // ── POST /api/v1/auth/reset-password/:token ────────────────────────────────────

@@ -19,7 +19,7 @@
  *   node --env-file=.env.local src/scripts/seedAlbumPin.js --undo
  */
 import mongoose from 'mongoose';
-import config from '../config/env.js';
+import { connectGuarded } from './_guard.js';
 import Pin from '../models/Pin.js';
 import Profile from '../models/Profile.js';
 import { deriveTags, sanitizeTags } from '../config/vocabulary.js';
@@ -92,8 +92,7 @@ async function pickMedia(authorId) {
 }
 
 async function main() {
-  await mongoose.connect(config.MONGO_URI);
-  console.log(`connected to ${mongoose.connection.name}${dryRun ? ' (dry run)' : ''}\n`);
+  await connectGuarded({ dryRun });
 
   const author = await pickAuthor();
   console.log(`author: ${author.fullName} (${author.role}) ${author._id}`);

@@ -53,6 +53,14 @@ const userSchema = new mongoose.Schema(
       type: Date,
       select: false,
     },
+    // Wrong-code counter for the app's in-app reset. A six-digit code is a
+    // small space, so guessing is capped rather than merely rate-limited: after
+    // RESET_CODE_MAX_ATTEMPTS the code is dead and a new one must be requested.
+    resetPasswordAttempts: {
+      type: Number,
+      default: 0,
+      select: false,
+    },
     lastLogin: {
       type: Date,
     },

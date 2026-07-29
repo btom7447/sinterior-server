@@ -195,6 +195,27 @@ export const passwordReset = ({ resetUrl }) => ({
   }),
 });
 
+/**
+ * The mobile app's reset: a code you read and type, not a link you follow.
+ *
+ * A link would bounce the user out to a browser and then need a universal-link
+ * round trip to get back into the app. A six-digit code keeps the whole journey
+ * on one screen, which is also the only version that works if the email is
+ * opened on a different device from the one holding the app.
+ */
+export const passwordResetCode = ({ code }) => ({
+  subject: `${code} is your Sintherior reset code`,
+  html: wrap({
+    preheader: `Your Sintherior password reset code is ${code}.`,
+    title: 'Your reset code',
+    body: `
+      <p style="margin:0 0 16px 0;">Enter this code in the Sintherior app to set a new password.</p>
+      <p style="margin:0 0 16px 0;font-size:32px;font-weight:700;letter-spacing:6px;">${code}</p>
+      <p style="margin:0;color:${BRAND.muted};font-size:13px;">The code expires in 15 minutes. If you didn't ask for it, ignore this email and nothing changes.</p>
+    `,
+  }),
+});
+
 // ── ORDERS ───────────────────────────────────────────────────────────────────
 
 export const orderPlacedClient = ({ order, buyerName }) => {

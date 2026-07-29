@@ -14,7 +14,7 @@
  * Usage (prod):  node --env-file=.env.production src/scripts/backfillPinTags.js
  */
 import mongoose from 'mongoose';
-import config from '../config/env.js';
+import { connectGuarded } from './_guard.js';
 import Pin from '../models/Pin.js';
 import { deriveTags, sanitizeTags } from '../config/vocabulary.js';
 
@@ -24,8 +24,7 @@ const same = (a = [], b = []) =>
   a.length === b.length && a.every((tag, i) => tag === b[i]);
 
 async function main() {
-  await mongoose.connect(config.MONGO_URI);
-  console.log(`connected${dryRun ? ' (dry run)' : ''}`);
+  await connectGuarded({ dryRun });
 
   const cursor = Pin.find({ status: { $ne: 'removed' } })
     .select('title caption taxonomy.tags')

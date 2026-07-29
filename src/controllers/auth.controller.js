@@ -17,7 +17,7 @@ import {
 import config from '../config/env.js';
 import { resolveUploadUrl } from '../utils/resolveUrl.js';
 import { sendEmail } from '../utils/sendEmail.js';
-import { emailVerification, passwordReset } from '../utils/emailTemplates.js';
+import { emailVerification, passwordReset, passwordResetCode } from '../utils/emailTemplates.js';
 
 // ── Helper: generate verification token, save to user, send email ────────────
 const sendVerificationEmail = async (user) => {
@@ -288,6 +288,93 @@ export const forgotPassword = asyncHandler(async (req, res) => {
   await sendEmail({ to: user.email, subject, html });
 
   sendSuccess(res, null, 'If that email exists, a reset link has been sent.');
+});
+
+// ── POST /api/v1/auth/forgot-password/code ────────────────────────────────────
+// The mobile reset. A link would send the user out to a browser and then need a
+// universal-link round trip to get back, and it breaks entirely when the email
+// is read on a different device from the one holding the app. A code they read
+// and type keeps the whole journey on one screen.
+const RESET_CODE_TTL_MS = 15 * 60 * 1000;
+const RESET_CODE_MAX_ATTEMPTS = 5;
+
+const hashCode = (email, code) =>
+  crypto.createHash('sha256').update(`${email.toLowerCase().trim()}:${code}`).digest('hex');
+
+export const requestPasswordCode = asyncHandler(async (req, res) => {
+  const email = String(req.body.email ?? '')
+    .toLowerCase()
+    .trim();
+  const user = await User.findOne({ email });
+
+  // Always 200: whether an address has an account is not ours to disclose.
+  const vague = 'If that email has an account, a code is on its way.';
+  if (!user) return sendSuccess(res, null, vague);
+
+  // Six digits, uniformly distributed. padStart matters: without it every code
+  // beginning with a zero would be short and a whole prefix would never occur.
+  const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+
+  user.resetPasswordToken = hashCode(email, code);
+  user.resetPasswordExpires = new Date(Date.now() + RESET_CODE_TTL_MS);
+  user.resetPasswordAttempts = 0;
+  await user.save({ validateBeforeSave: false });
+
+  if (config.NODE_ENV === 'development') {
+    return sendSuccess(res, { code }, 'Reset code generated (development only).');
+  }
+
+  const { subject, html } = passwordResetCode({ code });
+  await sendEmail({ to: user.email, subject, html });
+  sendSuccess(res, null, vague);
+});
+
+// ── POST /api/v1/auth/reset-password/code ─────────────────────────────────────
+export const resetPasswordWithCode = asyncHandler(async (req, res) => {
+  const email = String(req.body.email ?? '')
+    .toLowerCase()
+    .trim();
+  const { code, password } = req.body;
+  if (!email || !code || !password) {
+    throw new AppError('Email, code and new password are all required.', 400);
+  }
+
+  const user = await User.findOne({ email }).select(
+    '+resetPasswordToken +resetPasswordExpires +resetPasswordAttempts'
+  );
+  const expired = !user?.resetPasswordExpires || user.resetPasswordExpires < Date.now();
+  if (!user || !user.resetPasswordToken || expired) {
+    throw new AppError('That code has expired. Ask for a new one.', 400);
+  }
+
+  // Six digits is a small space, so guessing is capped outright rather than
+  // just slowed: spend the attempts and the code is dead, not merely delayed.
+  if (user.resetPasswordAttempts >= RESET_CODE_MAX_ATTEMPTS) {
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpires = undefined;
+    await user.save({ validateBeforeSave: false });
+    throw new AppError('Too many wrong codes. Ask for a new one.', 429);
+  }
+
+  if (hashCode(email, String(code).trim()) !== user.resetPasswordToken) {
+    user.resetPasswordAttempts += 1;
+    await user.save({ validateBeforeSave: false });
+    const left = RESET_CODE_MAX_ATTEMPTS - user.resetPasswordAttempts;
+    throw new AppError(
+      left > 0 ? `That code is not right. ${left} attempt${left === 1 ? '' : 's'} left.` : 'That code is not right.',
+      400
+    );
+  }
+
+  user.passwordHash = password; // pre-save hook hashes it
+  user.resetPasswordToken = undefined;
+  user.resetPasswordExpires = undefined;
+  user.resetPasswordAttempts = 0;
+  user.refreshTokenHash = undefined; // every existing session dies with the reset
+  await user.save();
+
+  clearRefreshCookie(res);
+  sendSuccess(res, null, 'Password changed. Sign in with your new one.');
 });
 
 // ── POST /api/v1/auth/reset-password/:token ────────────────────────────────────

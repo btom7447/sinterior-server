@@ -26,7 +26,7 @@
  *   node --env-file=.env.local src/scripts/backfillPinMetadata.js --skip-titles
  */
 import mongoose from 'mongoose';
-import config from '../config/env.js';
+import { connectGuarded } from './_guard.js';
 import Pin from '../models/Pin.js';
 import ArtisanProfile from '../models/ArtisanProfile.js';
 import { tradeForSkillCategory } from '../config/taxonomy.js';
@@ -49,8 +49,7 @@ const asTitle = (skill) => {
 };
 
 async function main() {
-  await mongoose.connect(config.MONGO_URI);
-  console.log(`connected to ${mongoose.connection.name}${dryRun ? ' (dry run)' : ''}\n`);
+  await connectGuarded({ dryRun });
 
   // One lookup: profileId -> what that artisan says they do.
   const artisans = await ArtisanProfile.find()
