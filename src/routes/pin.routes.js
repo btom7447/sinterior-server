@@ -12,6 +12,7 @@ import {
   deletePin,
   likePin,
   unlikePin,
+  recordView,
   listComments,
   addComment,
   deleteComment,
@@ -27,6 +28,7 @@ router.get('/:id/comments', listComments);
 router.delete('/comments/:commentId', protect, deleteComment);
 router.get('/:id', optionalAuth, getPin);   // GET /pins/:id — public (savedByMe/likedByMe when authed)
 
+router.post('/:id/view', recordView);       // public: ranking signal, nothing more
 router.post('/:id/like', protect, likePin);
 router.delete('/:id/like', protect, unlikePin);
 router.post('/:id/comments', protect, addComment);

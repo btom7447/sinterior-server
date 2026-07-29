@@ -4,6 +4,22 @@ _Platform-canonical decision log — other repos reference this file._
 
 _Newest first. Every entry: date · decision · why · what it forecloses._
 
+## 2026-07-29 — Discovery gets three real axes, and ranking gets a denominator
+
+The app had one working way to slice pins (trade), so every discovery surface was a variation on the same nineteen rails. Four decisions, taken together as the discovery model:
+
+1. **Rooms are a first-class second axis.** Rooms already existed on the Pin but were only rendered as a chip. They are now a picker in create, a filter in the feed API, and the basis of intersection rails. The intersection is the point: "tiling" is a category, "tiling in bathrooms" is an idea, and only the second is worth a rail. Cost: two axes multiply, so rail generation is combinatorial and capped client-side.
+
+2. **Tags are derived from a controlled vocabulary, never typed.** `src/config/vocabulary.js` holds ~50 Nigerian construction and interior terms (materials, styles, places) with their synonyms; the server reads them out of a pin's title and caption on create and on edit. This forecloses free-text hashtags: no user-authored tags, no autocomplete that writes new ones. Rationale: asking an artisan to hand-write tags after a twelve-hour job yields empty arrays, and free text yields "POP", "P.O.P" and "Pop Celing" as three separate tags. Growing the vocabulary is a commit plus a re-run of `src/scripts/backfillPinTags.js`, deliberately, like the taxonomy.
+
+3. **Boards are the social layer.** They stay public by default and gain followers (`BoardFollow`, profile to board, mirroring `Follow`'s no-denormalized-counters rule). Featured boards rank on follower count. Following a person and following a board stay separate concepts, because a good curator is rarely the same account as a good maker.
+
+4. **`counters.views` is live, and ranking has a denominator.** Supersedes "view counts: schema now, tracking endpoint P2" (2026-07-27). `POST /pins/:id/view` is public and unauthenticated; the client sends at most one per pin per session, and only when a pin is actually opened. `sort=top` is now dominated by the save-through rate (saves divided by max(views, 25)) with a capped absolute-saves term, so it stops rewarding whatever has been up longest. The endpoint is inflatable by design: it affects ranking only, never money or access. If gaming appears, the fix is a signed short-lived token issued with the pin, not auth.
+
+Rejected: a separate "categories" concept on top of trades. Trades already are the categories; a third naming system would mean three places to keep in sync and three ways to file the same kitchen.
+
+Also reverses part of the 2026-07-27 decision "no likes/comments in v1" — both shipped 2026-07-28.
+
 ## 2026-07-27 — SCOPE CORRECTION: the Pinterest-first surface is the MOBILE APP, not the website
 Supersedes the "feed becomes home" decision below. The website keeps its original landing page and structure unchanged; the Pinterest-style pin feed lives on the web at **/feed** (restyled to match the mobile app, replacing the old admin-curated feed page). The mobile app (React Native + Expo) is the surface whose entry route is the feed. All server-side feed work (Pin/Board/Follow API, ranking, backfill) is surface-agnostic and unaffected. The home-swap that briefly shipped was reverted the same day (client `6fdf19c`).
 

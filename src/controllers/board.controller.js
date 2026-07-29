@@ -1,6 +1,7 @@
 import asyncHandler from '../utils/asyncHandler.js';
 import AppError from '../utils/AppError.js';
 import Board from '../models/Board.js';
+import BoardFollow from '../models/BoardFollow.js';
 import BoardPin from '../models/BoardPin.js';
 import Pin from '../models/Pin.js';
 import Profile from '../models/Profile.js';
@@ -72,11 +73,27 @@ const FEATURED_MIN_PINS = 3;
 export const getFeaturedBoards = asyncHandler(async (req, res) => {
   const limit = Math.min(20, Math.max(1, parseInt(req.query.limit, 10) || 8));
 
-  const raw = await Board.find({ isPrivate: { $ne: true }, pinCount: { $gte: FEATURED_MIN_PINS } })
+  // Over-fetch, then rank by followers. Followers are the real signal (someone
+  // chose to keep watching this collection); size and recency only break ties.
+  const candidates = await Board.find({
+    isPrivate: { $ne: true },
+    pinCount: { $gte: FEATURED_MIN_PINS },
+  })
     .sort({ pinCount: -1, updatedAt: -1 })
-    .limit(limit)
+    .limit(limit * 4)
     .populate('owner', 'fullName avatarUrl role')
     .lean();
+
+  const followerCounts = await BoardFollow.aggregate([
+    { $match: { board: { $in: candidates.map((b) => b._id) } } },
+    { $group: { _id: '$board', n: { $sum: 1 } } },
+  ]);
+  const followersById = new Map(followerCounts.map((f) => [f._id.toString(), f.n]));
+
+  const raw = candidates
+    .map((b) => ({ ...b, followerCount: followersById.get(b._id.toString()) ?? 0 }))
+    .sort((a, b) => b.followerCount - a.followerCount || b.pinCount - a.pinCount)
+    .slice(0, limit);
 
   const previews = await previewsForBoards(raw.map((b) => b._id));
   const boards = raw.map((b) => ({
@@ -87,6 +104,33 @@ export const getFeaturedBoards = asyncHandler(async (req, res) => {
   }));
 
   res.status(200).json({ success: true, data: { boards } });
+});
+
+// ── POST/DELETE /boards/:id/follow ────────────────────────────────────────────
+// Idempotent both ways; the unique index absorbs a double tap. Private boards
+// cannot be followed, and the owner following their own board is a no-op.
+export const followBoard = asyncHandler(async (req, res) => {
+  const profile = await myProfile(req.user.id);
+  const board = await Board.findById(req.params.id).select('_id owner isPrivate');
+  if (!board || board.isPrivate) throw new AppError('Board not found.', 404);
+  if (board.owner.toString() === profile._id.toString()) {
+    throw new AppError('That board is already yours.', 400);
+  }
+
+  await BoardFollow.updateOne(
+    { follower: profile._id, board: board._id },
+    { $setOnInsert: { follower: profile._id, board: board._id } },
+    { upsert: true }
+  );
+  const followerCount = await BoardFollow.countDocuments({ board: board._id });
+  res.status(200).json({ success: true, data: { followedByMe: true, followerCount } });
+});
+
+export const unfollowBoard = asyncHandler(async (req, res) => {
+  const profile = await myProfile(req.user.id);
+  await BoardFollow.deleteOne({ follower: profile._id, board: req.params.id });
+  const followerCount = await BoardFollow.countDocuments({ board: req.params.id });
+  res.status(200).json({ success: true, data: { followedByMe: false, followerCount } });
 });
 
 // ── GET /boards/saved ─────────────────────────────────────────────────────────
@@ -240,9 +284,19 @@ export const getBoard = asyncHandler(async (req, res) => {
       media: resolvePinAlbum(p.media),
     }));
 
+  const [followerCount, followedByMe] = await Promise.all([
+    BoardFollow.countDocuments({ board: board._id }),
+    req.user
+      ? Profile.findOne({ userId: req.user.id })
+          .select('_id')
+          .lean()
+          .then((p) => (p ? BoardFollow.exists({ follower: p._id, board: board._id }) : null))
+      : null,
+  ]);
+
   res.status(200).json({
     success: true,
-    data: { board, pins, isOwner },
+    data: { board, pins, isOwner, followerCount, followedByMe: !!followedByMe },
     pagination: buildPaginationMeta(total, page, limit),
   });
 });

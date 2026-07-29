@@ -8,6 +8,8 @@ import {
   getBoard,
   getFeaturedBoards,
   getSavedPins,
+  followBoard,
+  unfollowBoard,
   savePinToBoard,
   removePinFromBoard,
   getPinBoardState,
@@ -23,6 +25,8 @@ router.get('/pin-state/:pinId', protect, getPinBoardState); // board-picker stat
 router.get('/:id', optionalAuth, getBoard); // public boards viewable; privacy enforced in controller
 router.patch('/:id', protect, updateBoard);
 router.delete('/:id', protect, deleteBoard);
+router.post('/:id/follow', protect, followBoard);
+router.delete('/:id/follow', protect, unfollowBoard);
 router.post('/:id/pins', protect, savePinToBoard);
 router.delete('/:id/pins/:pinId', protect, removePinFromBoard);
 

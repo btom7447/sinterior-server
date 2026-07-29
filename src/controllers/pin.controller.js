@@ -8,6 +8,7 @@ import BoardPin from '../models/BoardPin.js';
 import PinComment from '../models/PinComment.js';
 import PinLike from '../models/PinLike.js';
 import { TRADES, ROOMS, BUDGET_BANDS } from '../config/taxonomy.js';
+import { TAG_VOCABULARY, deriveTags, sanitizeTags } from '../config/vocabulary.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import { resolvePinAlbum, resolveUploadUrl } from '../utils/resolveUrl.js';
 
@@ -25,7 +26,7 @@ const myProfile = async (userId) => {
 export const getTaxonomy = asyncHandler(async (_req, res) => {
   res.status(200).json({
     success: true,
-    data: { trades: TRADES, rooms: ROOMS, budgetBands: BUDGET_BANDS },
+    data: { trades: TRADES, rooms: ROOMS, budgetBands: BUDGET_BANDS, tags: TAG_VOCABULARY },
   });
 });
 
@@ -84,10 +85,15 @@ export const getFeed = asyncHandler(async (req, res) => {
     }
   }
 
-  // sort=top ranks by demonstrated popularity instead of freshness. NOTE:
-  // counters.views is schema-only (never incremented — tracking is a P2 item),
-  // so "popular" genuinely means saves + editorial promotion, nothing more.
+  // sort=top ranks by demonstrated popularity instead of freshness.
+  //
+  // Raw saves reward whatever has been up longest, so the main term is the
+  // save-through rate: of the people who saw this, how many kept it. Views are
+  // floored at VIEW_FLOOR so a pin seen three times and saved once cannot
+  // outrank the whole platform on a 33% rate. Absolute saves still carry a
+  // capped share, because rate alone would let a tiny, lucky pin dominate.
   const topFirst = req.query.sort === 'top';
+  const VIEW_FLOOR = 25;
 
   const pipeline = [
     { $match: match },
@@ -96,7 +102,18 @@ export const getFeed = asyncHandler(async (req, res) => {
         score: topFirst
           ? {
               $add: [
-                { $multiply: ['$counters.saves', 100] },
+                {
+                  $multiply: [
+                    {
+                      $divide: [
+                        '$counters.saves',
+                        { $max: [{ $ifNull: ['$counters.views', 0] }, VIEW_FLOOR] },
+                      ],
+                    },
+                    600,
+                  ],
+                },
+                { $multiply: [{ $min: [{ $ifNull: ['$counters.saves', 0] }, 50] }, 20] },
                 { $cond: ['$isFeatured', 250, 0] },
                 // Gentle recency tiebreak so equal-save pins aren't frozen in
                 // one order forever.
@@ -225,6 +242,20 @@ export const getPin = asyncHandler(async (req, res) => {
   }
 
   res.status(200).json({ success: true, data: { pin, savedByMe, likedByMe } });
+});
+
+// ── POST /pins/:id/view ───────────────────────────────────────────────────────
+// Counted when a pin is actually opened, not when it scrolls past in a grid: a
+// view has to mean something for the save-through rate to mean anything.
+//
+// Public and unauthenticated by design, which makes it inflatable. That is an
+// accepted trade for now (it only affects ranking, never money or access); the
+// client sends at most one per pin per session. If gaming shows up, the fix is
+// a signed, short-lived token issued with the pin, not auth.
+export const recordView = asyncHandler(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) throw new AppError('Pin not found.', 404);
+  await Pin.updateOne({ _id: req.params.id, status: 'active' }, { $inc: { 'counters.views': 1 } });
+  res.status(204).end();
 });
 
 // ── POST/DELETE /pins/:id/like ────────────────────────────────────────────────
@@ -409,7 +440,9 @@ export const createPin = asyncHandler(async (req, res) => {
       trade: taxonomy?.trade ?? null,
       room: taxonomy?.room ?? null,
       budgetBand: taxonomy?.budgetBand ?? null,
-      tags: Array.isArray(taxonomy?.tags) ? taxonomy.tags.slice(0, 10) : [],
+      // Tags are read out of the pin's own words against the vocabulary, then
+      // merged with anything the client explicitly chose.
+      tags: sanitizeTags([...(taxonomy?.tags ?? []), ...deriveTags(title, caption)]),
     },
   });
 
@@ -426,11 +459,20 @@ export const updatePin = asyncHandler(async (req, res) => {
   const isOwner = profile && pin.author.toString() === profile._id.toString();
   if (!isOwner && !isAdmin) throw new AppError('You can only edit your own pins.', 403);
 
+  const wordsChanged = req.body.title !== undefined || req.body.caption !== undefined;
   for (const f of EDITABLE_FIELDS) if (req.body[f] !== undefined) pin[f] = req.body[f];
   if (req.body.taxonomy) {
     for (const f of EDITABLE_TAXONOMY) {
       if (req.body.taxonomy[f] !== undefined) pin.taxonomy[f] = req.body.taxonomy[f];
     }
+  }
+  // Edited words mean re-read the vocabulary: a pin whose caption gained
+  // "Lekki" should be findable under Lekki without being reposted.
+  if (wordsChanged || req.body.taxonomy?.tags !== undefined) {
+    pin.taxonomy.tags = sanitizeTags([
+      ...(req.body.taxonomy?.tags ?? []),
+      ...deriveTags(pin.title, pin.caption),
+    ]);
   }
   // Moderation fields — admin only.
   if (isAdmin) {
