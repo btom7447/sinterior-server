@@ -19,6 +19,8 @@ import { resolveUploadUrl } from '../utils/resolveUrl.js';
 import { sendEmail } from '../utils/sendEmail.js';
 import { emailVerification, passwordReset, passwordResetCode } from '../utils/emailTemplates.js';
 import { deleteAccount, deletionBlockers } from '../services/accountDeletion.service.js';
+import Board from '../models/Board.js';
+import { defaultBoardName } from '../config/boards.js';
 
 // ── Helper: generate verification token, save to user, send email ────────────
 const sendVerificationEmail = async (user) => {
@@ -124,6 +126,12 @@ export const register = asyncHandler(async (req, res) => {
     }
 
     await session.commitTransaction();
+
+    // Somewhere to save to, ready before it is needed. Outside the transaction
+    // because a board that fails to create must never fail a registration.
+    Board.create({ owner: profile._id, name: defaultBoardName(role) }).catch((err) => {
+      console.warn('[register] default board not created:', err.message);
+    });
   } catch (err) {
     await session.abortTransaction();
     throw err;
