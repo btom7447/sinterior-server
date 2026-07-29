@@ -84,7 +84,7 @@ const config = Object.freeze({
   // transcoding a 60-second phone clip is 60-100MB and every viewer downloads
   // all of it, which is a cost borne by the user's data plan rather than ours.
   CLOUDFLARE_ACCOUNT_ID: process.env.CLOUDFLARE_ACCOUNT_ID || '',
-  CLOUDFLARE_STREAM_TOKEN: process.env.CLOUDFLARE_STREAM_TOKEN || '',
+  CLOUDFLARE_API_TOKEN: process.env.CLOUDFLARE_API_TOKEN || '',
 });
 
 export default config;

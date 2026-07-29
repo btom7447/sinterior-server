@@ -24,7 +24,7 @@ const API = 'https://api.cloudflare.com/client/v4';
 export const MAX_VIDEO_SECONDS = 60;
 
 export const streamConfigured = () =>
-  !!config.CLOUDFLARE_ACCOUNT_ID && !!config.CLOUDFLARE_STREAM_TOKEN;
+  !!config.CLOUDFLARE_ACCOUNT_ID && !!config.CLOUDFLARE_API_TOKEN;
 
 const call = async (path, options = {}) => {
   if (!streamConfigured()) {
@@ -34,7 +34,7 @@ const call = async (path, options = {}) => {
   const res = await fetch(`${API}/accounts/${config.CLOUDFLARE_ACCOUNT_ID}/stream${path}`, {
     ...options,
     headers: {
-      Authorization: `Bearer ${config.CLOUDFLARE_STREAM_TOKEN}`,
+      Authorization: `Bearer ${config.CLOUDFLARE_API_TOKEN}`,
       'Content-Type': 'application/json',
       ...options.headers,
     },
