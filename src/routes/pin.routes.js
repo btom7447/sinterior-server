@@ -12,6 +12,8 @@ import {
   getVideoStatus,
   updatePin,
   deletePin,
+  publishPin,
+  duplicatePin,
   likePin,
   unlikePin,
   recordView,
@@ -67,6 +69,8 @@ router.post(
 router.post('/upload/video', protect, restrictTo('artisan', 'supplier'), createVideoUpload);
 router.get('/upload/video/:uid', protect, getVideoStatus);
 router.post('/', protect, restrictTo('artisan', 'supplier'), createPin);
+router.post('/:id/publish', protect, publishPin);     // a draft going live
+router.post('/:id/duplicate', protect, duplicatePin); // copies into a new draft
 router.patch('/:id', protect, updatePin);   // owner or admin (checked in controller)
 router.delete('/:id', protect, deletePin);  // owner or admin (soft delete)
 

@@ -123,6 +123,15 @@ export const getFeed = asyncHandler(async (req, res) => {
   // save-through rate: of the people who saw this, how many kept it. Views are
   // floored at VIEW_FLOOR so a pin seen three times and saved once cannot
   // outrank the whole platform on a 33% rate. Absolute saves still carry a
+  // Drafts. Only ever visible to their own author, and only when asked for by
+  // name — there is no combination of query parameters that leaks somebody
+  // else's unfinished work, because the author has to match the viewer.
+  if (req.query.status === 'draft') {
+    const own = viewerId && String(req.query.author) === String(viewerId);
+    if (!own) throw new AppError('Drafts are only visible to their author.', 403);
+    match.status = 'draft';
+  }
+
   // capped share, because rate alone would let a tiny, lucky pin dominate.
   const topFirst = req.query.sort === 'top';
   const VIEW_FLOOR = 25;
@@ -283,9 +292,11 @@ export const getPin = asyncHandler(async (req, res) => {
 
   let savedByMe = false;
   let likedByMe = false;
+  let viewerProfileId = null;
   if (req.user) {
     const profile = await Profile.findOne({ userId: req.user.id }).select('_id');
     if (profile) {
+      viewerProfileId = profile._id;
       const [saved, liked] = await Promise.all([
         BoardPin.exists({ owner: profile._id, pinId: pin._id }),
         PinLike.exists({ owner: profile._id, pinId: pin._id }),
@@ -293,6 +304,15 @@ export const getPin = asyncHandler(async (req, res) => {
       savedByMe = !!saved;
       likedByMe = !!liked;
     }
+  }
+
+  // A draft is readable only by the person writing it. Everyone else gets the
+  // same answer they would get for a pin that does not exist, rather than a
+  // 403 that confirms one is there.
+  const isAuthor =
+    viewerProfileId && String(pin.author?._id ?? pin.author) === String(viewerProfileId);
+  if (pin.status === 'draft' && !isAuthor && req.user?.role !== 'admin') {
+    throw new AppError('Pin not found.', 404);
   }
 
   // The flags go on the pin as well as beside it. They used to be returned
@@ -482,10 +502,18 @@ export const createPin = asyncHandler(async (req, res) => {
 
   const lead = album[0];
   const primaryUrl = lead?.url ?? mediaUrl;
-  if (!primaryUrl || !title) throw new AppError('At least one image and a title are required.', 400);
+
+  // A draft is allowed to be incomplete — that is the whole point of one, and
+  // demanding a title before it can be put down defeats the purpose. Anything
+  // going live still has to be a real pin.
+  const asDraft = req.body.status === 'draft';
+  if (!primaryUrl) throw new AppError('At least one image is required.', 400);
+  if (!asDraft && !title) throw new AppError('A title is required to publish.', 400);
 
   const pin = await Pin.create({
     author: profile._id,
+    status: asDraft ? 'draft' : 'active',
+    publishedAt: asDraft ? null : new Date(),
     sourceType: 'native',
     mediaType: (lead?.type ?? mediaType) === 'video' ? 'video' : 'image',
     mediaUrl: primaryUrl,
@@ -509,7 +537,77 @@ export const createPin = asyncHandler(async (req, res) => {
     },
   });
 
-  res.status(201).json({ success: true, data: { pin }, message: 'Pin created.' });
+  res.status(201).json({
+    success: true,
+    data: { pin },
+    message: asDraft ? 'Saved as a draft.' : 'Pin created.',
+  });
+});
+
+/** The author of a pin, or an admin, or nobody. */
+const requireOwnPin = async (req, select = '') => {
+  const pin = await Pin.findById(req.params.id).select(select);
+  if (!pin || pin.status === 'removed') throw new AppError('Pin not found.', 404);
+
+  const profile = await Profile.findOne({ userId: req.user.id }).select('_id');
+  const mine = profile && String(pin.author) === String(profile._id);
+  if (!mine && req.user.role !== 'admin') throw new AppError('That is not your pin.', 403);
+
+  return { pin, profile };
+};
+
+// ── POST /pins/:id/publish ────────────────────────────────────────────────────
+// A draft going live. Everything a published pin needs is checked here rather
+// than at draft time, which is the whole bargain: put it down half-finished,
+// and the app asks for the rest when it matters.
+export const publishPin = asyncHandler(async (req, res) => {
+  const { pin } = await requireOwnPin(req, '_id author status title taxonomy mediaUrl');
+  if (pin.status !== 'draft') throw new AppError('That pin is already live.', 400);
+
+  if (!pin.title?.trim()) throw new AppError('Give it a title before publishing.', 400);
+  if (!pin.taxonomy?.trade) throw new AppError('Pick a trade before publishing.', 400);
+
+  pin.status = 'active';
+  pin.publishedAt = new Date();
+  await pin.save();
+
+  res.status(200).json({ success: true, data: { pin }, message: 'Published.' });
+});
+
+// ── POST /pins/:id/duplicate ──────────────────────────────────────────────────
+// Copies a pin into a fresh draft. The use is a maker who shoots one job in
+// several rooms: the trade, the tags and the media are the same and only the
+// caption changes, and retyping all of it is what stops the second one being
+// posted at all.
+//
+// Always a draft, never live: a copy that published itself would put two
+// near-identical pins in the feed before anyone had a chance to edit one.
+export const duplicatePin = asyncHandler(async (req, res) => {
+  const { pin, profile } = await requireOwnPin(req);
+
+  const copy = await Pin.create({
+    author: profile?._id ?? pin.author,
+    status: 'draft',
+    publishedAt: null,
+    sourceType: 'native',
+    mediaType: pin.mediaType,
+    mediaUrl: pin.mediaUrl,
+    posterUrl: pin.posterUrl,
+    aspectRatio: pin.aspectRatio,
+    media: pin.media,
+    title: pin.title,
+    caption: pin.caption,
+    taxonomy: {
+      trade: pin.taxonomy?.trade ?? null,
+      room: pin.taxonomy?.room ?? null,
+      budgetBand: pin.taxonomy?.budgetBand ?? null,
+      tags: pin.taxonomy?.tags ?? [],
+    },
+    // Counters deliberately start at zero. Inheriting the original's saves
+    // would be a lie about work nobody has seen yet.
+  });
+
+  res.status(201).json({ success: true, data: { pin: copy }, message: 'Copied to your drafts.' });
 });
 
 // ── PATCH /pins/:id ───────────────────────────────────────────────────────────

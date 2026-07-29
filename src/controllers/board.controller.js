@@ -58,7 +58,16 @@ const previewsForBoards = async (boardIds) => {
 // ── GET /boards (mine) ────────────────────────────────────────────────────────
 export const listMyBoards = asyncHandler(async (req, res) => {
   const profile = await myProfile(req.user.id);
-  const raw = await Board.find({ owner: profile._id }).sort({ updatedAt: -1 }).lean();
+  // Dragged order first where it exists, then most recently touched. Mongo
+  // sorts null before numbers ascending, so boards that have never been moved
+  // would jump to the front — the boolean below pushes them behind the ones
+  // that have, without needing to number every board on the first drag.
+  const raw = await Board.aggregate([
+    { $match: { owner: profile._id } },
+    { $addFields: { unordered: { $cond: [{ $eq: [{ $ifNull: ['$order', null] }, null] }, 1, 0] } } },
+    { $sort: { unordered: 1, order: 1, updatedAt: -1 } },
+    { $project: { unordered: 0 } },
+  ]);
   const previews = await previewsForBoards(raw.map((b) => b._id));
 
   const boards = raw.map((b) => ({
@@ -188,11 +197,22 @@ export const getSavedPins = asyncHandler(async (req, res) => {
     });
   }
 
+  // Pinned first, then newest. A pin the owner deliberately put at the top has
+  // to stay there as more is saved underneath it, which is the only thing that
+  // makes pinning worth doing.
   const base = [
     { $match: { boardId: { $in: boardIds } } },
     { $sort: { createdAt: -1 } },
-    { $group: { _id: '$pinId', savedAt: { $first: '$createdAt' } } },
-    { $sort: { savedAt: -1 } },
+    {
+      $group: {
+        _id: '$pinId',
+        savedAt: { $first: '$createdAt' },
+        // A pin can sit on several boards; it counts as pinned if it is pinned
+        // on any of them.
+        pinnedAt: { $max: '$pinnedAt' },
+      },
+    },
+    { $sort: { pinnedAt: -1, savedAt: -1 } },
   ];
 
   const [counted, rows] = await Promise.all([
@@ -437,6 +457,52 @@ export const unsavePinEverywhere = asyncHandler(async (req, res) => {
     success: true,
     data: { saved: false, removed: memberships.length },
     message: 'Removed from your boards.',
+  });
+});
+
+// ── PATCH /boards/order — the order the owner dragged their boards into ──────
+// Positions arrive as a whole list rather than as a move, because a move is
+// only meaningful against a list state the server cannot see. Sending the order
+// entire makes the write idempotent and means a dropped request costs nothing
+// but the next drag.
+export const reorderBoards = asyncHandler(async (req, res) => {
+  const profile = await myProfile(req.user.id);
+  const ids = Array.isArray(req.body.boardIds) ? req.body.boardIds : [];
+  if (!ids.length) throw new AppError('Send the boards in their new order.', 400);
+
+  // Only boards this person owns move, so a crafted list cannot reorder
+  // somebody else's shelf.
+  const mine = await Board.find({ owner: profile._id, _id: { $in: ids } })
+    .select('_id')
+    .lean();
+  const owned = new Set(mine.map((b) => String(b._id)));
+
+  await Promise.all(
+    ids
+      .filter((id) => owned.has(String(id)))
+      .map((id, at) => Board.updateOne({ _id: id, owner: profile._id }, { $set: { order: at } }))
+  );
+
+  res.status(200).json({ success: true, data: { ordered: owned.size } });
+});
+
+// ── POST/DELETE /boards/pin/:pinId/top — keep this at the top of my saves ────
+// A marker rather than a position: pinning one thing must not renumber
+// everything else, and unpinning must not leave a hole.
+export const setSavedPinTop = asyncHandler(async (req, res) => {
+  const profile = await myProfile(req.user.id);
+  const pinnedAt = req.method === 'POST' ? new Date() : null;
+
+  const result = await BoardPin.updateMany(
+    { owner: profile._id, pinId: req.params.pinId },
+    { $set: { pinnedAt } }
+  );
+  if (!result.matchedCount) throw new AppError('That pin is not saved.', 404);
+
+  res.status(200).json({
+    success: true,
+    data: { pinned: !!pinnedAt },
+    message: pinnedAt ? 'Pinned to the top.' : 'Unpinned.',
   });
 });
 

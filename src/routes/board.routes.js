@@ -16,6 +16,8 @@ import {
   removePinFromBoard,
   getPinBoardState,
   unsavePinEverywhere,
+  reorderBoards,
+  setSavedPinTop,
 } from '../controllers/board.controller.js';
 
 const router = Router();
@@ -26,6 +28,9 @@ router.get('/featured', getFeaturedBoards);                 // public, must prec
 router.get('/saved', protect, getSavedPins);                // must precede /:id
 router.get('/pin-state/:pinId', protect, getPinBoardState); // board-picker state
 router.delete('/pin/:pinId', protect, unsavePinEverywhere);  // must precede /:id
+router.patch('/order', protect, reorderBoards);              // must precede /:id
+router.post('/pin/:pinId/top', protect, setSavedPinTop);
+router.delete('/pin/:pinId/top', protect, setSavedPinTop);
 router.get('/:id', optionalAuth, getBoard); // public boards viewable; privacy enforced in controller
 router.patch('/:id', protect, updateBoard);
 router.delete('/:id', protect, deleteBoard);

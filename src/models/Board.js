@@ -19,6 +19,12 @@ const boardSchema = new mongoose.Schema(
     description: { type: String, trim: true, maxlength: 300 },
     // Privacy is enforced server-side on every read path (docs/security.md).
     isPrivate: { type: Boolean, default: false },
+    /**
+     * Where the owner has dragged this board. Boards with no order fall back to
+     * most-recently-touched, so an account that has never reordered anything
+     * behaves exactly as it did before this existed.
+     */
+    order: { type: Number, default: null },
     // Denormalized for board cards: newest saved pin's media.
     coverUrl: { type: String, trim: true },
     pinCount: { type: Number, default: 0, min: 0 },

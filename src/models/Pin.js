@@ -55,7 +55,23 @@ const pinSchema = new mongoose.Schema(
     // shift. Defaults to 1 (square) when the source dimensions are unknown.
     aspectRatio: { type: Number, default: 1, min: 0.2, max: 5 },
 
-    title: { type: String, required: [true, 'title is required'], trim: true, maxlength: 200 },
+    /**
+     * Required to be live, optional while a draft. A draft that cannot be put
+     * down until it has a title is not a draft — somebody photographing a job
+     * on site needs to save the photograph first and find the words later.
+     * publishPin enforces this at the moment it starts to matter.
+     */
+    title: {
+      type: String,
+      required: [
+        function () {
+          return this.status !== 'draft';
+        },
+        'title is required',
+      ],
+      trim: true,
+      maxlength: 200,
+    },
     caption: { type: String, trim: true, maxlength: 1000 },
 
     taxonomy: {
@@ -76,11 +92,25 @@ const pinSchema = new mongoose.Schema(
       views: { type: Number, default: 0, min: 0 },
     },
 
+    /**
+     * draft   — written but not published. Never in any feed, never counted,
+     *           visible only to its author on their own profile.
+     * active  — live.
+     * hidden  — taken down by moderation.
+     * removed — deleted by the author. Kept as a tombstone so save counters on
+     *           other people's boards do not go negative.
+     *
+     * Drafts exist because a job is photographed over days: the tiling goes in
+     * on Tuesday and the grouting on Friday, and an artisan should be able to
+     * start the pin on Tuesday without putting half a job in front of clients.
+     */
     status: {
       type: String,
-      enum: ['active', 'hidden', 'removed'],
+      enum: ['draft', 'active', 'hidden', 'removed'],
       default: 'active',
     },
+    /** When it went live. Null while it is still a draft. */
+    publishedAt: { type: Date, default: null },
     isFeatured: { type: Boolean, default: false },
   },
   {

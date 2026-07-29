@@ -22,6 +22,12 @@ const boardPinSchema = new mongoose.Schema(
       ref: 'Profile',
       required: true,
     },
+    /**
+     * Set when the owner pins this to the top of their saved grid. Null for
+     * everything else, which is almost all of it — a sparse marker rather than
+     * a position, so pinning one thing never renumbers the rest.
+     */
+    pinnedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
