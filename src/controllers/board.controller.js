@@ -401,6 +401,8 @@ export const getBoard = asyncHandler(async (req, res) => {
       : null,
   ]);
 
+  const audience = await audienceForBoard(board._id, board.owner?._id);
+
   res.status(200).json({
     success: true,
     data: {
@@ -411,10 +413,58 @@ export const getBoard = asyncHandler(async (req, res) => {
       followedByMe: !!followedByMe,
       likeCount,
       likedByMe: !!likedByMe,
+      audience,
     },
     pagination: buildPaginationMeta(total, page, limit),
   });
 });
+
+/** How many faces to send. Past this a row of avatars stops being readable. */
+const AUDIENCE_FACES = 5;
+
+/**
+ * The people who have shown this board something: followed it or liked it.
+ *
+ * One row of faces plus a count is the most compact honest answer to "does
+ * anybody care about this", which on a marketplace is what a client is really
+ * asking when they look at an artisan's collection.
+ *
+ * Followers and likers are pooled and de-duplicated, because somebody who did
+ * both is one person and showing them twice would inflate a thin board. The
+ * owner is excluded — being interested in your own board is not a signal.
+ */
+async function audienceForBoard(boardId, ownerId) {
+  const [follows, likes] = await Promise.all([
+    BoardFollow.find({ board: boardId }).sort({ createdAt: -1 }).select('follower').lean(),
+    BoardLike.find({ board: boardId }).sort({ createdAt: -1 }).select('owner').lean(),
+  ]);
+
+  const ids = [];
+  const seen = new Set(ownerId ? [String(ownerId)] : []);
+  for (const id of [...follows.map((f) => f.follower), ...likes.map((l) => l.owner)]) {
+    const key = String(id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    ids.push(id);
+  }
+
+  // Only the faces are fetched; the total is the whole pool, so "+3" means three
+  // more people rather than three more rows nobody asked for.
+  const faces = await Profile.find({ _id: { $in: ids.slice(0, AUDIENCE_FACES) } })
+    .select('fullName avatarUrl')
+    .lean();
+
+  // Restore the recency order the ids were collected in.
+  const byId = new Map(faces.map((f) => [String(f._id), f]));
+  return {
+    total: ids.length,
+    people: ids
+      .slice(0, AUDIENCE_FACES)
+      .map((id) => byId.get(String(id)))
+      .filter(Boolean)
+      .map((f) => ({ _id: f._id, fullName: f.fullName, avatarUrl: resolveUploadUrl(f.avatarUrl) })),
+  };
+}
 
 // ── POST /boards/:id/pins { pinId } — save ───────────────────────────────────
 export const savePinToBoard = asyncHandler(async (req, res) => {
