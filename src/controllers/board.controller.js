@@ -219,6 +219,11 @@ export const getSavedPins = asyncHandler(async (req, res) => {
   // Pinned first, then newest. A pin the owner deliberately put at the top has
   // to stay there as more is saved underneath it, which is the only thing that
   // makes pinning worth doing.
+  //
+  // Within the pinned group the order is oldest-pinned-first, so pinning
+  // something new queues it behind what is already up there rather than
+  // displacing it. Somebody who pinned three things in an order meant that
+  // order; the newest arrival is not automatically the most important.
   const base = [
     { $match: { boardId: { $in: boardIds } } },
     { $sort: { createdAt: -1 } },
@@ -227,11 +232,14 @@ export const getSavedPins = asyncHandler(async (req, res) => {
         _id: '$pinId',
         savedAt: { $first: '$createdAt' },
         // A pin can sit on several boards; it counts as pinned if it is pinned
-        // on any of them.
-        pinnedAt: { $max: '$pinnedAt' },
+        // on any of them, and the earliest pin is the one that fixed its place.
+        pinnedAt: { $min: '$pinnedAt' },
       },
     },
-    { $sort: { pinnedAt: -1, savedAt: -1 } },
+    // Mongo sorts null before dates ascending, so pinnedAt alone would put
+    // everything unpinned at the top. This splits the groups first.
+    { $addFields: { unpinned: { $cond: [{ $ifNull: ['$pinnedAt', false] }, 0, 1] } } },
+    { $sort: { unpinned: 1, pinnedAt: 1, savedAt: -1 } },
   ];
 
   const [counted, rows] = await Promise.all([
@@ -248,10 +256,10 @@ export const getSavedPins = asyncHandler(async (req, res) => {
   const pins = rows
     .map((r) => {
       const pin = byId.get(r._id.toString());
-      return pin ? { pin, pinnedAt: r.pinnedAt ?? null } : null;
+      return pin ? { pin, pinnedAt: r.pinnedAt ?? null, savedAt: r.savedAt ?? null } : null;
     })
     .filter(Boolean)
-    .map(({ pin: p, pinnedAt }) => ({
+    .map(({ pin: p, pinnedAt, savedAt }) => ({
       ...p,
       mediaUrl: resolveUploadUrl(p.mediaUrl),
       posterUrl: p.posterUrl ? resolveUploadUrl(p.posterUrl) : undefined,
@@ -262,6 +270,10 @@ export const getSavedPins = asyncHandler(async (req, res) => {
       // Carried onto the pin so a card can show it is pinned without the grid
       // having to hold a second list of which ones are.
       pinnedAt,
+      // The app needs this to put an unpinned card back where it belongs
+      // without waiting for a refetch. A pin's own createdAt is when the work
+      // was posted, which is a different date entirely.
+      savedAt,
       savedByMe: true,
     }));
 
@@ -303,7 +315,12 @@ export const updateBoard = asyncHandler(async (req, res) => {
   if (req.body.isPrivate !== undefined) board.isPrivate = !!req.body.isPrivate;
 
   try {
-    await board.save();
+    // timestamps off on purpose. The shelf falls back to most-recently-touched
+    // order, and "touched" should mean something was filed here — not that its
+    // name or its privacy was changed. Letting those bump updatedAt made a
+    // board jump to the front of the shelf for being renamed, which reads as
+    // the grid glitching rather than as anything the owner asked for.
+    await board.save({ timestamps: false });
   } catch (err) {
     if (err.code === 11000) throw new AppError('You already have a board with that name.', 409);
     throw err;
