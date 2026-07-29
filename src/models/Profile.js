@@ -38,6 +38,11 @@ const profileSchema = new mongoose.Schema(
       trim: true,
       maxlength: [500, 'Bio cannot exceed 500 characters'],
     },
+    // Set when the account is deleted. The profile is emptied rather than
+    // removed, because orders, jobs and chat threads point at it and the other
+    // party's history must keep resolving to something.
+    isDeleted: { type: Boolean, default: false },
+    deletedAt: { type: Date },
     // Feed personalization seed — trade ids picked at onboarding (taste picker).
     // Merged with save-history affinity in the pin feed ranking.
     preferredTrades: {

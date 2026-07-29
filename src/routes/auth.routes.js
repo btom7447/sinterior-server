@@ -11,6 +11,8 @@ import {
   resetPasswordWithCode,
   resetPassword,
   changePassword,
+  checkAccountDeletion,
+  deleteMyAccount,
   sendVerification,
   verifyEmail,
 } from '../controllers/auth.controller.js';
@@ -124,7 +126,7 @@ router.post(
     body('password')
       .isLength({ min: 8 })
       .withMessage('Password must be at least 8 characters')
-      .matches(/d/)
+      .matches(/\d/)
       .withMessage('Password must contain at least one number'),
   ],
   validate,
@@ -145,6 +147,11 @@ router.post(
   validate,
   resetPassword
 );
+
+// ── Account deletion ──────────────────────────────────────────────────────────
+// Store-mandated: any app that creates accounts must let you delete one.
+router.get('/account/deletion-check', protect, checkAccountDeletion);
+router.delete('/account', protect, authLimiter, deleteMyAccount);
 
 // ── POST /api/v1/auth/change-password ─────────────────────────────────────────
 router.post(

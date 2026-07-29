@@ -18,6 +18,7 @@ import config from '../config/env.js';
 import { resolveUploadUrl } from '../utils/resolveUrl.js';
 import { sendEmail } from '../utils/sendEmail.js';
 import { emailVerification, passwordReset, passwordResetCode } from '../utils/emailTemplates.js';
+import { deleteAccount, deletionBlockers } from '../services/accountDeletion.service.js';
 
 // ── Helper: generate verification token, save to user, send email ────────────
 const sendVerificationEmail = async (user) => {
@@ -401,6 +402,45 @@ export const resetPassword = asyncHandler(async (req, res) => {
 
   clearRefreshCookie(res);
   sendSuccess(res, null, 'Password has been reset. Please log in with your new password.');
+});
+
+// ── GET /api/v1/auth/account/deletion-check ───────────────────────────────────
+// What, if anything, stands in the way. Asked before the confirm screen so the
+// user learns about a live order then, rather than after typing their password.
+export const checkAccountDeletion = asyncHandler(async (req, res) => {
+  const profile = await Profile.findOne({ userId: req.user.id }).select('_id');
+  const blockers = profile ? await deletionBlockers(profile._id) : [];
+  sendSuccess(res, { canDelete: blockers.length === 0, blockers });
+});
+
+// ── DELETE /api/v1/auth/account ───────────────────────────────────────────────
+// Required by both app stores for any app with account creation, and by NDPR.
+//
+// The password is re-checked even though the caller is already authenticated: a
+// session can be minutes old on a phone somebody handed over, and this is the
+// one action with no undo.
+export const deleteMyAccount = asyncHandler(async (req, res) => {
+  const { password } = req.body;
+  if (!password) throw new AppError('Enter your password to confirm.', 400);
+
+  const user = await User.findById(req.user.id).select('+passwordHash');
+  if (!user) throw new AppError('Account not found.', 404);
+
+  const ok = await user.comparePassword(password);
+  if (!ok) throw new AppError('That password is not right.', 401);
+
+  const profile = await Profile.findOne({ userId: user._id }).select('_id');
+  if (profile) {
+    const blockers = await deletionBlockers(profile._id);
+    if (blockers.length) {
+      throw new AppError(`Finish these first: ${blockers.join(', ')}.`, 409);
+    }
+  }
+
+  await deleteAccount({ userId: user._id, profileId: profile?._id });
+
+  clearRefreshCookie(res);
+  sendSuccess(res, null, 'Your account has been deleted.');
 });
 
 // ── POST /api/v1/auth/change-password ─────────────────────────────────────────

@@ -64,6 +64,20 @@ const userSchema = new mongoose.Schema(
     lastLogin: {
       type: Date,
     },
+    // Account deletion. The row survives because orders, jobs and messages
+    // reference it and dangling references would break the other party's
+    // history; everything identifying on it is destroyed. Login is impossible
+    // once set: the password hash is replaced with a non-bcrypt string that
+    // can never match.
+    isDeleted: {
+      type: Boolean,
+      default: false,
+      select: false,
+    },
+    deletedAt: {
+      type: Date,
+      select: false,
+    },
     isBanned: {
       type: Boolean,
       default: false,
