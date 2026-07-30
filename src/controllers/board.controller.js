@@ -97,7 +97,48 @@ export const listMyBoards = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, data: { boards } });
 });
 
-// ── GET /boards/featured ──────────────────────────────────────────────────────
+// -- GET /boards/by-profile/:profileId -----------------------------------------
+/**
+ * Somebody else's public boards.
+ *
+ * A client does not post work, so a profile built around a portfolio has nothing to show
+ * for most of the people on the platform — and what a client *does* have is collections:
+ * the rooms they are saving towards, which is the most useful thing an artisan could see
+ * before quoting for them.
+ *
+ * Private boards never appear. The privacy flag is the whole contract of a private board
+ * and this is a public endpoint, so it is filtered in the query rather than after it.
+ */
+export const getProfileBoards = asyncHandler(async (req, res) => {
+  const { profileId } = req.params;
+  if (!mongoose.isValidObjectId(profileId)) throw new AppError('Profile not found.', 404);
+
+  const limit = Math.min(24, Math.max(1, parseInt(req.query.limit, 10) || 12));
+
+  const raw = await Board.find({
+    owner: profileId,
+    isPrivate: { $ne: true },
+    // A board with nothing in it is a name, not a collection.
+    pinCount: { $gt: 0 },
+  })
+    .sort({ updatedAt: -1 })
+    .limit(limit)
+    .lean();
+
+  const previews = await previewsForBoards(raw.map((b) => b._id));
+
+  const boards = raw.map((b) => ({
+    _id: b._id,
+    name: b.name,
+    pinCount: b.pinCount,
+    coverUrl: resolveUploadUrl(b.coverUrl),
+    previewUrls: previews.get(b._id.toString()) ?? [],
+  }));
+
+  res.status(200).json({ success: true, data: { boards } });
+});
+
+// -- GET /boards/featured -----------------------------------------------------────────
 // Public boards worth browsing: someone else's collection is the best possible
 // entry point into a taxonomy nobody wants to read. Private boards never appear
 // here, and boards too thin to fill a mosaic are left out rather than shown

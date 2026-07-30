@@ -7,6 +7,7 @@ import {
   deleteBoard,
   getBoard,
   getFeaturedBoards,
+  getProfileBoards,
   getSavedPins,
   followBoard,
   unfollowBoard,
@@ -24,6 +25,10 @@ const router = Router();
 
 router.get('/', protect, listMyBoards);
 router.post('/', protect, createBoard);
+// -- GET /api/v1/boards/by-profile/:profileId ---------------------------------
+// Public, and before /:id so "by-profile" is never read as a board id.
+router.get('/by-profile/:profileId', getProfileBoards);
+
 router.get('/featured', getFeaturedBoards);                 // public, must precede /:id
 router.get('/saved', protect, getSavedPins);                // must precede /:id
 router.get('/pin-state/:pinId', protect, getPinBoardState); // board-picker state
