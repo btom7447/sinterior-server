@@ -4,6 +4,21 @@ _Platform-canonical decision log — other repos reference this file._
 
 _Newest first. Every entry: date · decision · why · what it forecloses._
 
+## 2026-07-30 — Staff are unsearchable; reporting replaces them
+
+`GET /profiles/search` now excludes `role: 'admin'` and the caller. An admin
+account findable by name means members opening private threads about jobs that
+nothing is logged against, answered by whoever happens to be online — and it
+makes impersonation trivial, since anyone can call themselves Sintherior Support.
+
+The cost is that a member had no way to reach staff from inside a thread, so the
+report control in the chat header is the replacement, and staff who do open a
+conversation carry a verified badge (`isStaff`) so the absence of one is
+meaningful.
+
+Admin tooling for the resulting queue is **not built** — see ops-playbook.md,
+"Chat reports". Reports currently have to be read out of Atlas.
+
 ## 2026-07-29 — Discovery gets three real axes, and ranking gets a denominator
 
 The app had one working way to slice pins (trade), so every discovery surface was a variation on the same nineteen rails. Four decisions, taken together as the discovery model:
@@ -60,4 +75,3 @@ Business is CAC-registered → pursue official verification; bot code already sp
 
 ## 2026-06-09 — WhatsApp bot isolated from the web marketplace
 Own phone-keyed models + own Mongo DB (`sintherior-bot`), API-only admin. The web app's email/password models don't fit WhatsApp phone-keyed users. Forecloses: no shared collections between bot and web app.
-
