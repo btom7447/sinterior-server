@@ -102,7 +102,13 @@ const messageSchema = new mongoose.Schema(
      * Who has removed this from their own view.
      *
      * "Delete for me" is per-person, so it cannot be a flag — the same message is
-     * gone for one participant and present for the other. Filtered on read.
+     * removed for one participant and untouched for the other.
+     *
+     * NOT filtered on read. The row is still returned to whoever deleted it, as a
+     * marker saying they did: a message that simply disappears leaves a hole where
+     * the reply underneath it still refers to something, and on a platform where a
+     * thread is the record of a job, silent gaps are the last thing anybody wants.
+     * The other participant is never told this happened.
      */
     hiddenFor: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Profile' }],
 

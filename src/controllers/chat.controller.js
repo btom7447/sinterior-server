@@ -274,6 +274,20 @@ export const reportConversation = asyncHandler(async (req, res) => {
   sendSuccess(res, null, 'Reported. Our team will take a look.');
 });
 
+/**
+ * How long a sender has to withdraw a message from the other side.
+ *
+ * An hour, which is far shorter than WhatsApp's couple of days — and deliberately.
+ * The legitimate use is fixing a mistake: wrong thread, wrong photograph, a typo in
+ * a price. Nobody notices that a day later; they notice it in minutes.
+ *
+ * The illegitimate use is removing evidence. A thread here is the record of a job,
+ * and a sender who can reach back into last month can quietly delete the message
+ * where they promised a price or a date. An hour keeps the mistake-fixing and
+ * closes that.
+ */
+const WITHDRAW_WINDOW_MS = 60 * 60 * 1000;
+
 // ── DELETE /api/v1/chat/messages/:messageId ───────────────────────────────────
 /**
  * Remove a message, from your own view or from everybody's.
@@ -303,6 +317,33 @@ export const deleteMessage = asyncHandler(async (req, res) => {
     if (!mine) throw new AppError('You can only withdraw your own messages.', 403);
     if (message.deletedForEveryone) {
       return sendSuccess(res, null, 'Message already removed.');
+    }
+
+    const age = Date.now() - new Date(message.createdAt).getTime();
+    if (age > WITHDRAW_WINDOW_MS) {
+      throw new AppError(
+        'This message is too old to unsend. You can still delete it for yourself.',
+        403
+      );
+    }
+
+    /**
+     * Not while the conversation is under review.
+     *
+     * A report exists precisely because somebody disputes what was said here, and
+     * letting the reported party edit the transcript while staff are reading it
+     * would make the report worthless. Deleting for yourself is still allowed —
+     * that changes nobody else's copy.
+     */
+    const underReview = await ChatReport.exists({
+      conversationId: message.conversationId,
+      status: { $in: ['open', 'reviewing'] },
+    });
+    if (underReview) {
+      throw new AppError(
+        'This conversation is being reviewed, so messages cannot be unsent right now.',
+        403
+      );
     }
 
     // The assets first: if this fails the message is still withdrawn, but an
@@ -383,13 +424,9 @@ export const getMessages = asyncHandler(async (req, res) => {
     }
   }
 
-  // Hidden-for-me messages are excluded from both the page and the count, or the
-  // pagination would report a total that includes rows nobody will ever see.
-  const visible = { conversationId, hiddenFor: { $ne: profile._id } };
-
   const [total, messages] = await Promise.all([
-    Message.countDocuments(visible),
-    Message.find(visible)
+    Message.countDocuments({ conversationId }),
+    Message.find({ conversationId })
       .sort({ createdAt: -1 }) // newest first; client reverses for display
       .skip(skip)
       .limit(limit)
@@ -402,8 +439,26 @@ export const getMessages = asyncHandler(async (req, res) => {
       }),
   ]);
 
+  /**
+   * Per-viewer, because "deleted" is not a property of the message.
+   *
+   * A message this person deleted for themselves comes back emptied and flagged, so
+   * their thread shows that they removed something rather than a gap. hiddenFor
+   * itself never leaves the server: whether the other participant tidied their own
+   * view is their business, and WhatsApp does not reveal it either.
+   */
+  const me = profile._id.toString();
+  const shaped = messages.map((message) => {
+    const json = message.toJSON();
+    const deletedForMe = (json.hiddenFor ?? []).some((id) => String(id) === me);
+    delete json.hiddenFor;
+
+    if (!deletedForMe) return json;
+    return { ...json, deletedForMe: true, content: '', media: [], attachments: [] };
+  });
+
   const pagination = buildPaginationMeta(total, page, limit);
-  sendPaginated(res, messages, pagination, 'Messages retrieved.');
+  sendPaginated(res, shaped, pagination, 'Messages retrieved.');
 });
 
 // ── POST /api/v1/chat/messages ────────────────────────────────────────────────
