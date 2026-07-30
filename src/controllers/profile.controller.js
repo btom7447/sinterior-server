@@ -94,7 +94,9 @@ export const getPublicProfile = asyncHandler(async (req, res) => {
       // object — the client tests for presence to decide whether a section exists.
       profile.role === 'artisan'
         ? ArtisanProfile.findOne({ profileId: profile._id })
-            .select('skill skillCategory businessName businessTagline experienceYears isAvailable city state')
+            .select(
+              'skill skillCategory businessName businessTagline experienceYears isAvailable rating reviewCount city state'
+            )
             .lean()
         : null,
       profile.role === 'supplier'
@@ -136,6 +138,10 @@ export const getPublicProfile = asyncHandler(async (req, res) => {
               businessTagline: artisan.businessTagline ?? null,
               experienceYears: artisan.experienceYears ?? null,
               isAvailable: artisan.isAvailable ?? null,
+              // What other people found. On a marketplace this outranks anything the
+              // artisan wrote about themselves, so the page should be able to show it.
+              rating: artisan.rating ?? null,
+              reviewCount: artisan.reviewCount ?? 0,
             }
           : null,
 
