@@ -101,6 +101,9 @@ router.post(
       .isLength({ max: 2000 })
       .withMessage('Message cannot exceed 2000 characters'),
     body('replyTo').optional({ values: 'falsy' }).isMongoId().withMessage('Invalid reply target'),
+    // A JSON array of bar heights for a voice note. Parsed and validated by the
+    // upload middleware, which is where a malformed one can be dropped harmlessly.
+    body('envelope').optional().isString(),
   ],
   validate,
   sendMessage

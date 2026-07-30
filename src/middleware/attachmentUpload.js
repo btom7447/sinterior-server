@@ -87,6 +87,16 @@ export const uploadAttachments = asyncHandler(async (req, _res, next) => {
   const files = req.files ?? [];
   if (!files.length) return next();
 
+  /**
+   * A voice note's waveform, measured on the phone that recorded it.
+   *
+   * Arrives as JSON on a multipart field, since a form cannot carry an array. Parsed
+   * defensively and dropped entirely if it is not what it claims: a malformed
+   * envelope is decoration nobody will miss, and a thrown parse would fail an upload
+   * over a picture of a waveform.
+   */
+  req.envelope = parseEnvelope(req.body?.envelope);
+
   // The per-kind size check, now that the sizes are known. Rejected up front
   // rather than after uploading the acceptable half of a batch, so a refusal
   // does not leave orphans in the account.
@@ -99,11 +109,33 @@ export const uploadAttachments = asyncHandler(async (req, _res, next) => {
     if (!verdict.ok) throw new AppError(verdict.reason, 413);
   }
 
-  req.attachments = await Promise.all(files.map(toAttachment));
+  req.attachments = await Promise.all(
+    // The envelope belongs to the voice note, and a message carries at most one.
+    files.map((file) => toAttachment(file, kindOf(file.mimetype) === 'voice' ? req.envelope : null))
+  );
   next();
 });
 
-async function toAttachment(file) {
+/** Up to this many bars, each a finite 0–1. Anything else is not an envelope. */
+function parseEnvelope(raw) {
+  if (typeof raw !== 'string' || !raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || !parsed.length || parsed.length > 200) return null;
+
+    const bars = parsed
+      .map((n) => Number(n))
+      .filter((n) => Number.isFinite(n))
+      .map((n) => Math.min(1, Math.max(0, n)));
+
+    return bars.length === parsed.length ? bars : null;
+  } catch {
+    return null;
+  }
+}
+
+async function toAttachment(file, envelope) {
   const kind = kindOf(file.mimetype);
   const result = await send(file, kind);
 
@@ -125,6 +157,7 @@ async function toAttachment(file) {
     // Only video has a frame worth showing. A voice note draws a waveform from
     // its duration instead, which costs no request at all.
     thumbnailUrl: kind === 'video' ? posterFor(result) : null,
+    ...(envelope ? { envelope } : {}),
   };
 }
 

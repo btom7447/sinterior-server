@@ -39,6 +39,20 @@ const attachmentSchema = new mongoose.Schema(
     height: { type: Number, default: null },
     durationMs: { type: Number, default: null },
     thumbnailUrl: { type: String, default: null },
+
+    /**
+     * A voice note's loudness over time, 0–1 per bar.
+     *
+     * Measured on the sender's device from the metering the recorder was already
+     * producing for its live meter, so it is the actual loudness of the actual
+     * recording rather than a shape derived from the duration. Forty numbers,
+     * because the alternative — analysing the audio server-side on every upload —
+     * costs a processing step per message to produce the same picture.
+     *
+     * Absent on every note sent before this existed, and on any device where
+     * metering was unavailable. The app falls back to a deterministic stand-in.
+     */
+    envelope: { type: [Number], default: undefined },
   },
   { _id: false }
 );
