@@ -125,6 +125,22 @@ export default function initSocket(server) {
     socket.broadcast.emit('user:online', { profileId });
 
     /**
+     * Watching one pin's comments.
+     *
+     * A room per pin rather than a broadcast: a popular pin has a hundred
+     * readers and every other pin's reader would otherwise be woken for a
+     * comment they cannot see. Joined when a comment sheet opens and left when
+     * it closes, so the room only ever holds people actually looking.
+     */
+    socket.on('pin:watch', (pinId) => {
+      if (typeof pinId === 'string' && pinId.length <= 64) socket.join(`pin:${pinId}`);
+    });
+
+    socket.on('pin:unwatch', (pinId) => {
+      if (typeof pinId === 'string') socket.leave(`pin:${pinId}`);
+    });
+
+    /**
      * Everything sent to this person while they were away is delivered now.
      *
      * Delivery is "reached their device", and a socket connecting is the only

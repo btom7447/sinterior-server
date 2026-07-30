@@ -179,10 +179,19 @@ export const addComment = asyncHandler(async (req, res) => {
   });
 
   const comment = await withAuthorAndMentions(PinComment.findById(created._id)).lean();
+  const shaped = shapeComment(comment, new Set());
+
+  // Sent whole, so a reader with the sheet open can insert the row without a
+  // round trip to find out what was said.
+  emitToPin(req, pin._id, 'comment:new', {
+    pinId: String(pin._id),
+    parentId: parent ? String(parent._id) : null,
+    comment: shaped,
+  });
 
   res.status(201).json({
     success: true,
-    data: { comment: shapeComment(comment, new Set()) },
+    data: { comment: shaped },
     message: parent ? 'Reply posted.' : 'Comment posted.',
   });
 });
@@ -199,6 +208,26 @@ async function resolveMentions(raw) {
 
   const found = await Profile.find({ _id: { $in: ids } }).select('_id').lean();
   return found.map((p) => p._id);
+}
+
+/**
+ * Tell everybody looking at this pin what just happened to its comments.
+ *
+ * A room per pin, joined by clients with the sheet open. Notifications already
+ * reach the pin's author, but the author is not the only person reading — a
+ * thread under a popular pin is a conversation, and a conversation where you
+ * have to pull down to refresh is not one.
+ *
+ * Never throws into the request: a comment that saved and failed to broadcast is
+ * a comment, and the next fetch will show it anyway.
+ */
+function emitToPin(req, pinId, event, payload) {
+  try {
+    const io = req.app.get('io');
+    if (io && pinId) io.to(`pin:${String(pinId)}`).emit(event, payload);
+  } catch {
+    /* a missed broadcast is cosmetic */
+  }
 }
 
 // ── POST /pins/comments/:commentId/like ───────────────────────────────────────
@@ -232,6 +261,11 @@ export const likeComment = asyncHandler(async (req, res) => {
   }
 
   const fresh = await PinComment.findById(comment._id).select('likes').lean();
+  emitToPin(req, comment.pinId, 'comment:likes', {
+    pinId: String(comment.pinId),
+    commentId: String(comment._id),
+    likes: fresh?.likes ?? 0,
+  });
   res.status(200).json({ success: true, data: { likedByMe: true, likes: fresh?.likes ?? 0 } });
 });
 
@@ -250,7 +284,12 @@ export const unlikeComment = asyncHandler(async (req, res) => {
     );
   }
 
-  const fresh = await PinComment.findById(req.params.commentId).select('likes').lean();
+  const fresh = await PinComment.findById(req.params.commentId).select('likes pinId').lean();
+  emitToPin(req, fresh?.pinId, 'comment:likes', {
+    pinId: String(fresh?.pinId ?? ''),
+    commentId: String(req.params.commentId),
+    likes: fresh?.likes ?? 0,
+  });
   res.status(200).json({ success: true, data: { likedByMe: false, likes: fresh?.likes ?? 0 } });
 });
 
@@ -294,6 +333,15 @@ export const deleteComment = asyncHandler(async (req, res) => {
     { _id: comment.pinId, 'counters.comments': { $gte: removedCount } },
     { $inc: { 'counters.comments': -removedCount } }
   );
+
+  emitToPin(req, comment.pinId, 'comment:removed', {
+    pinId: String(comment.pinId),
+    commentId: String(comment._id),
+    parentId: comment.parent ? String(comment.parent) : null,
+    // How far the pin's own counter moved, so a reader's header can follow it
+    // without refetching the pin.
+    removedCount,
+  });
 
   res.status(200).json({ success: true, data: null, message: 'Comment removed.' });
 });
