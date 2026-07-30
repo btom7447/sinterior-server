@@ -35,6 +35,18 @@ const TYPES = {
   'video/webm': { kind: 'video', resource: 'video', ext: 'webm' },
   'video/3gpp': { kind: 'video', resource: 'video', ext: '3gp' },
 
+  // ── Voice notes ────────────────────────────────────────────────────────────
+  // Cloudinary stores audio under its video resource type, which is also what
+  // makes it report a duration reliably — and a voice note without a duration is
+  // a bubble nobody taps, because they cannot tell whether it is four seconds or
+  // four minutes on a metered connection.
+  'audio/m4a': { kind: 'voice', resource: 'video', ext: 'm4a' },
+  'audio/mp4': { kind: 'voice', resource: 'video', ext: 'm4a' },
+  'audio/x-m4a': { kind: 'voice', resource: 'video', ext: 'm4a' },
+  'audio/mpeg': { kind: 'voice', resource: 'video', ext: 'mp3' },
+  'audio/aac': { kind: 'voice', resource: 'video', ext: 'aac' },
+  'audio/webm': { kind: 'voice', resource: 'video', ext: 'webm' },
+
   // ── Documents ──────────────────────────────────────────────────────────────
   'application/pdf': { kind: 'file', resource: 'raw', ext: 'pdf' },
   'application/msword': { kind: 'file', resource: 'raw', ext: 'doc' },
@@ -65,6 +77,10 @@ export const MAX_BYTES = {
   image: 12 * 1024 * 1024,
   video: 64 * 1024 * 1024,
   file: 25 * 1024 * 1024,
+  // Generous for speech: a five-minute m4a at the recorder's bitrate is under
+  // 3MB, so 16 leaves room for a long site explanation without inviting somebody
+  // to send a podcast.
+  voice: 16 * 1024 * 1024,
 };
 
 /** The largest anything may be, which is what Multer is given. */
@@ -119,9 +135,15 @@ export function checkFile({ mime, size, name }) {
 
   const limit = MAX_BYTES[kind];
   if (typeof size === 'number' && size > limit) {
+    const family = {
+      video: 'videos',
+      image: 'photos',
+      voice: 'voice notes',
+      file: 'documents',
+    }[kind];
     return {
       ok: false,
-      reason: `${label} is ${megabytes(size)} — ${kind === 'video' ? 'videos' : kind === 'image' ? 'photos' : 'documents'} can be up to ${megabytes(limit)}.`,
+      reason: `${label} is ${megabytes(size)} — ${family} can be up to ${megabytes(limit)}.`,
     };
   }
 
@@ -149,7 +171,8 @@ export function describeAttachments(attachments = []) {
 
   const [kind] = kinds;
   const n = counts[kind];
-  const word = { image: 'Photo', video: 'Video', file: 'Document' }[kind] ?? 'File';
+  const word =
+    { image: 'Photo', video: 'Video', voice: 'Voice note', file: 'Document' }[kind] ?? 'File';
   return n === 1 ? word : `${n} ${word.toLowerCase()}s`;
 }
 

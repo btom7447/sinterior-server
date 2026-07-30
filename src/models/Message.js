@@ -18,8 +18,12 @@ const attachmentSchema = new mongoose.Schema(
     /** How Cloudinary stores it, which is needed to build a delete or a poster. */
     resourceType: { type: String, enum: ['image', 'video', 'raw'], default: 'image' },
 
-    /** What the app draws: a photo tile, a video tile, or a document row. */
-    kind: { type: String, enum: ['image', 'video', 'file'], required: true },
+    /**
+     * What the app draws: a photo tile, a video tile, a voice note, or a
+     * document row. `voice` is stored as a video resource because that is how
+     * Cloudinary handles audio, so kind and resourceType deliberately differ.
+     */
+    kind: { type: String, enum: ['image', 'video', 'voice', 'file'], required: true },
     mime: { type: String, default: null },
 
     /** The name is most of what tells somebody whether to open the thing. */

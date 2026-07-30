@@ -330,7 +330,9 @@ export const sendMessage = asyncHandler(async (req, res) => {
 
   // media[] is the compatible shadow: URLs only, and only of things the web
   // client knows how to draw. A document in there would render as a broken img.
-  const media = attachments.filter((a) => a.kind !== 'file').map((a) => a.url);
+  const media = attachments
+    .filter((a) => a.kind === 'image' || a.kind === 'video')
+    .map((a) => a.url);
 
   if ((!content || !content.trim()) && attachments.length === 0) {
     throw new AppError('Message must have content or an attachment.', 400);

@@ -122,13 +122,16 @@ async function toAttachment(file) {
     durationMs: result.duration ? Math.round(result.duration * 1000) : null,
     // A still to show while a video is not playing. Cloudinary will render one
     // from the same asset, so this is a URL rather than a second upload.
+    // Only video has a frame worth showing. A voice note draws a waveform from
+    // its duration instead, which costs no request at all.
     thumbnailUrl: kind === 'video' ? posterFor(result) : null,
   };
 }
 
 function send(file, kind) {
+  const FOLDERS = { file: 'documents', voice: 'voice', image: 'image', video: 'video' };
   const options = {
-    folder: `sinterior/chat/${kind === 'file' ? 'documents' : kind}`,
+    folder: `sinterior/chat/${FOLDERS[kind] ?? 'other'}`,
     resource_type: resourceOf(file.mimetype),
   };
 

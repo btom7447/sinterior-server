@@ -124,3 +124,34 @@ describe('describeAttachments', () => {
     assert.equal(describeAttachments([{}]), 'Document');
   });
 });
+
+describe('voice notes', () => {
+  it('is its own kind, stored as a video resource', () => {
+    // Cloudinary handles audio under resource_type video, and that mismatch is
+    // deliberate — asking it to store an m4a as raw loses the duration.
+    assert.equal(kindOf('audio/m4a'), 'voice');
+    assert.equal(resourceOf('audio/m4a'), 'video');
+  });
+
+  it('accepts every container the two recorders produce', () => {
+    // iOS records m4a and reports it variously; Android and web differ again.
+    for (const mime of ['audio/m4a', 'audio/mp4', 'audio/x-m4a', 'audio/aac', 'audio/webm']) {
+      assert.equal(kindOf(mime), 'voice', mime);
+    }
+  });
+
+  it('has a limit sized for speech, not for music', () => {
+    assert.equal(checkFile({ mime: 'audio/m4a', size: 3 * MB }).ok, true);
+    assert.equal(checkFile({ mime: 'audio/m4a', size: 20 * MB }).ok, false);
+  });
+
+  it('names voice notes when refusing one on size', () => {
+    const verdict = checkFile({ mime: 'audio/m4a', size: 20 * MB, name: 'note.m4a' });
+    assert.match(verdict.reason, /voice notes/);
+  });
+
+  it('is described as a voice note in a conversation preview', () => {
+    assert.equal(describeAttachments([{ kind: 'voice' }]), 'Voice note');
+    assert.equal(describeAttachments([{ kind: 'voice' }, { kind: 'voice' }]), '2 voice notes');
+  });
+});
