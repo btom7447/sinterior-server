@@ -181,3 +181,40 @@ function filename(file) {
   const ext = extensionOf(file.mimetype) ?? 'bin';
   return `attachment.${ext}`;
 }
+
+/**
+ * Delete uploaded assets when the message carrying them is withdrawn.
+ *
+ * Nothing cleaned up before this, so every attachment ever sent stayed in the
+ * account forever — a bill that only grows, and a copy of something somebody
+ * explicitly asked to take back. Withdrawing a message that leaves its photographs
+ * publicly fetchable is not withdrawing it.
+ *
+ * resourceType has to be passed: Cloudinary cannot delete a raw file or a video if
+ * asked to delete an image, and it answers "not found" rather than failing, so
+ * getting this wrong looks exactly like success.
+ *
+ * Never throws. A message that failed to shed its assets is still withdrawn, and
+ * blocking the withdrawal on a storage error would be the wrong trade.
+ */
+export async function destroyAttachments(attachments = []) {
+  const targets = attachments.filter((a) => a?.publicId);
+  if (!targets.length) return { destroyed: 0 };
+
+  let destroyed = 0;
+  await Promise.all(
+    targets.map(async (attachment) => {
+      try {
+        await cloudinary.uploader.destroy(attachment.publicId, {
+          resource_type: attachment.resourceType || 'image',
+          invalidate: true,
+        });
+        destroyed += 1;
+      } catch (err) {
+        console.warn('[attachments] could not destroy', attachment.publicId, err.message);
+      }
+    })
+  );
+
+  return { destroyed };
+}

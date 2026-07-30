@@ -5,6 +5,7 @@ import {
   getConversationWith,
   getConversations,
   getMessages,
+  deleteMessage,
   reportConversation,
   searchUserByEmail,
   sendMessage,
@@ -96,9 +97,23 @@ router.post(
       .trim()
       .isLength({ max: 2000 })
       .withMessage('Message cannot exceed 2000 characters'),
+    body('replyTo').optional({ values: 'falsy' }).isMongoId().withMessage('Invalid reply target'),
   ],
   validate,
   sendMessage
+);
+
+// ── DELETE /api/v1/chat/messages/:messageId ───────────────────────────────────
+// ?scope=me (default) hides it for the caller; ?scope=everyone withdraws it, and
+// is the sender's alone.
+router.delete(
+  '/messages/:messageId',
+  [
+    param('messageId').isMongoId().withMessage('Message not found.'),
+    query('scope').optional().isIn(['me', 'everyone']),
+  ],
+  validate,
+  deleteMessage
 );
 
 export default router;

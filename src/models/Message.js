@@ -81,6 +81,41 @@ const messageSchema = new mongoose.Schema(
 
     /** Every attachment, documents included, with its metadata. */
     attachments: { type: [attachmentSchema], default: [] },
+
+    /**
+     * The message this one answers.
+     *
+     * On a marketplace "this one" needs a referent far more than it does in a
+     * social chat: a thread carries several quotes, several photographs and
+     * several dates, and "no, the other one" is how a job gets done wrong. A
+     * reference rather than a copy, so an edit or a removal upstream is reflected
+     * rather than frozen — and populated on read, since a quote strip that costs a
+     * second request per bubble is a quote strip nobody draws.
+     */
+    replyTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Message',
+      default: null,
+    },
+
+    /**
+     * Who has removed this from their own view.
+     *
+     * "Delete for me" is per-person, so it cannot be a flag — the same message is
+     * gone for one participant and present for the other. Filtered on read.
+     */
+    hiddenFor: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Profile' }],
+
+    /**
+     * Withdrawn by its sender for everybody.
+     *
+     * The row stays. A hole in a conversation is worse than a marker: the reply
+     * underneath it still refers to something, and a thread that silently loses a
+     * message is a thread nobody can reason about in a dispute. WhatsApp shows
+     * "this message was deleted" for the same reason.
+     */
+    deletedForEveryone: { type: Boolean, default: false },
+    deletedAt: { type: Date, default: null },
     isRead: {
       type: Boolean,
       default: false,

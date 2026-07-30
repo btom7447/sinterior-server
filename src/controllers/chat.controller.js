@@ -9,6 +9,7 @@ import { resolveUploadUrl, resolveImageUrls } from '../utils/resolveUrl.js';
 import { describeAttachments } from '../config/attachments.js';
 import { isProfileOnline } from '../socket.js';
 import ChatReport from '../models/ChatReport.js';
+import { destroyAttachments } from '../middleware/attachmentUpload.js';
 
 
 /**
@@ -273,6 +274,63 @@ export const reportConversation = asyncHandler(async (req, res) => {
   sendSuccess(res, null, 'Reported. Our team will take a look.');
 });
 
+// ── DELETE /api/v1/chat/messages/:messageId ───────────────────────────────────
+/**
+ * Remove a message, from your own view or from everybody's.
+ *
+ * `scope=everyone` is the sender's alone and blanks the content in place rather
+ * than removing the row: a reply underneath still refers to something, and a
+ * conversation that silently loses a message cannot be reasoned about when a job
+ * is disputed. The attachments go with it, since those are the part that costs
+ * storage and the part somebody most wants withdrawn.
+ *
+ * `scope=me` is available to either participant and only ever hides.
+ */
+export const deleteMessage = asyncHandler(async (req, res) => {
+  const profile = await Profile.findOne({ userId: req.user.id }).select('_id');
+  if (!profile) throw new AppError('Profile not found.', 404);
+
+  const message = await Message.findById(req.params.messageId);
+  if (!message) throw new AppError('Message not found.', 404);
+
+  const mine = message.senderId.toString() === profile._id.toString();
+  const theirs = message.receiverId.toString() === profile._id.toString();
+  if (!mine && !theirs) throw new AppError('Message not found.', 404);
+
+  const everyone = req.query.scope === 'everyone';
+
+  if (everyone) {
+    if (!mine) throw new AppError('You can only withdraw your own messages.', 403);
+    if (message.deletedForEveryone) {
+      return sendSuccess(res, null, 'Message already removed.');
+    }
+
+    // The assets first: if this fails the message is still withdrawn, but an
+    // orphaned upload is a bill that keeps arriving.
+    await destroyAttachments(message.attachments);
+
+    message.content = '';
+    message.media = [];
+    message.attachments = [];
+    message.deletedForEveryone = true;
+    message.deletedAt = new Date();
+    await message.save();
+
+    const io = req.app.get('io');
+    if (io) {
+      const payload = { conversationId: message.conversationId, messageId: message._id };
+      io.to(`profile:${message.senderId}`).emit('message:deleted', payload);
+      io.to(`profile:${message.receiverId}`).emit('message:deleted', payload);
+    }
+
+    return sendSuccess(res, null, 'Message removed for everyone.');
+  }
+
+  // Hidden for this person only. addToSet so a repeat is not an error.
+  await Message.updateOne({ _id: message._id }, { $addToSet: { hiddenFor: profile._id } });
+  sendSuccess(res, null, 'Message removed.');
+});
+
 export const getMessages = asyncHandler(async (req, res) => {
   const profile = await Profile.findOne({ userId: req.user.id });
   if (!profile) {
@@ -325,14 +383,23 @@ export const getMessages = asyncHandler(async (req, res) => {
     }
   }
 
+  // Hidden-for-me messages are excluded from both the page and the count, or the
+  // pagination would report a total that includes rows nobody will ever see.
+  const visible = { conversationId, hiddenFor: { $ne: profile._id } };
+
   const [total, messages] = await Promise.all([
-    Message.countDocuments({ conversationId }),
-    Message.find({ conversationId })
+    Message.countDocuments(visible),
+    Message.find(visible)
       .sort({ createdAt: -1 }) // newest first; client reverses for display
       .skip(skip)
       .limit(limit)
       .populate('senderId', 'fullName avatarUrl')
-      .populate('receiverId', 'fullName avatarUrl'),
+      .populate('receiverId', 'fullName avatarUrl')
+      .populate({
+        path: 'replyTo',
+        select: 'content attachments senderId',
+        populate: { path: 'senderId', select: 'fullName' },
+      }),
   ]);
 
   const pagination = buildPaginationMeta(total, page, limit);
@@ -375,7 +442,23 @@ export const sendMessage = asyncHandler(async (req, res) => {
     throw new AppError('Recipient not found.', 404);
   }
 
+  /**
+   * A reply has to point at a message in this same conversation.
+   *
+   * Checked rather than trusted: a client passing any message id would otherwise
+   * quote a stranger's private message into a thread it was never part of, which
+   * is a disclosure bug rather than a validation nicety.
+   */
   const conversationId = buildConversationId(senderProfile._id, receiverProfile._id);
+
+  let replyTo = null;
+  if (req.body.replyTo && mongoose.isValidObjectId(req.body.replyTo)) {
+    const quoted = await Message.findOne({
+      _id: req.body.replyTo,
+      conversationId,
+    }).select('_id');
+    if (quoted) replyTo = quoted._id;
+  }
 
   /**
    * Born delivered when the recipient is connected.
@@ -397,6 +480,7 @@ export const sendMessage = asyncHandler(async (req, res) => {
     content: content?.trim() || '',
     media: media.length > 0 ? media : undefined,
     attachments,
+    replyTo,
     isRead: false,
     status: online ? 'delivered' : 'sent',
     deliveredAt: online ? new Date() : null,
@@ -405,6 +489,13 @@ export const sendMessage = asyncHandler(async (req, res) => {
   const populated = await message.populate([
     { path: 'senderId', select: 'fullName avatarUrl' },
     { path: 'receiverId', select: 'fullName avatarUrl' },
+    // Enough of the quoted message to draw the strip, and nothing more: a nested
+    // reply chain would grow without bound down a long thread.
+    {
+      path: 'replyTo',
+      select: 'content attachments senderId',
+      populate: { path: 'senderId', select: 'fullName' },
+    },
   ]);
 
   // Emit real-time socket events so the receiver sees the message immediately
@@ -430,6 +521,7 @@ export const sendMessage = asyncHandler(async (req, res) => {
       // Sent whole so the recipient can draw the bubble from the socket payload
       // alone, without a round trip to find out what arrived.
       attachments: message.toJSON().attachments,
+      replyTo: populated.replyTo ? populated.toJSON().replyTo : null,
       isRead: false,
       status: message.status,
       createdAt: message.createdAt,
