@@ -12,6 +12,7 @@ import {
   searchMessages,
   searchUserByEmail,
   sendMessage,
+  updateConversations,
 } from '../controllers/chat.controller.js';
 import { protect } from '../middleware/auth.js';
 import { parseAttachments, uploadAttachments } from '../middleware/attachmentUpload.js';
@@ -27,6 +28,19 @@ router.get('/search', searchUserByEmail);
 
 // ── GET /api/v1/chat/conversations ────────────────────────────────────────────
 router.get('/conversations', getConversations);
+
+// -- POST /api/v1/chat/conversations/actions ----------------------------------
+// Declared before /conversations/:conversationId so "actions" is never read as an id.
+router.post(
+  '/conversations/actions',
+  [
+    body('conversationIds').isArray({ min: 1, max: 50 }),
+    body('action').isIn(['pin', 'unpin', 'mute', 'unmute', 'clear']),
+    body('mutedUntil').optional().isISO8601(),
+  ],
+  validate,
+  updateConversations
+);
 
 // ── GET /api/v1/chat/with/:profileId — a thread that may not exist yet ───────
 // Declared before /conversations/:conversationId so a profile id is never read

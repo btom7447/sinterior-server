@@ -9,6 +9,7 @@ import { resolveUploadUrl, resolveImageUrls } from '../utils/resolveUrl.js';
 import { describeAttachments } from '../config/attachments.js';
 import { isProfileOnline } from '../socket.js';
 import ChatReport from '../models/ChatReport.js';
+import ConversationState from '../models/ConversationState.js';
 import { destroyAttachments } from '../middleware/attachmentUpload.js';
 import escapeRegex from '../utils/escapeRegex.js';
 
@@ -117,6 +118,9 @@ export const getConversations = asyncHandler(async (req, res) => {
           // only when that message is one of ours.
           status: '$lastMessage.status',
           hasMedia: { $gt: [{ $size: { $ifNull: ['$lastMessage.media', []] } }, 0] },
+          // Carried so the row can say a message was deleted rather than showing an
+          // empty line under the name, which reads as a thread that broke.
+          deletedForEveryone: '$lastMessage.deletedForEveryone',
           // Carried through so the row can name what was sent. A thread whose
           // last message is a spreadsheet should not read as an empty line.
           attachments: {
@@ -135,19 +139,42 @@ export const getConversations = asyncHandler(async (req, res) => {
     },
   ]);
 
+  /**
+   * This person's own arrangement of these threads.
+   *
+   * One query for all of them rather than a lookup per row, and most threads have no
+   * row at all - the absence of one is the default and costs nothing.
+   */
+  const states = await ConversationState.find({
+    profileId: profile._id,
+    conversationId: { $in: conversations.map((c) => c._id) },
+  }).lean();
+
+  const stateFor = new Map(states.map((s) => [s.conversationId, s]));
+  const now = Date.now();
+
   // For each conversation, determine the "other" participant
   const enriched = conversations.map((conv) => {
     const senderIsMe = conv.senderProfile?._id?.toString() === myId;
     const otherProfile = senderIsMe ? conv.receiverProfile : conv.senderProfile;
     const last = conv.lastMessage;
+    const state = stateFor.get(conv.conversationId);
+
     return {
       conversationId: conv.conversationId,
+      pinnedAt: state?.pinnedAt ?? null,
+      // Compared on read rather than unset by a job, so "mute for 8 hours" needs no
+      // scheduler to expire it.
+      muted: !!state?.mutedUntil && new Date(state.mutedUntil).getTime() > now,
+      mutedUntil: state?.mutedUntil ?? null,
       lastMessage: last
         ? {
             ...last,
             // Named on the server so every client says the same thing, and so a
             // list row never comes back blank because the message was a file.
-            preview: last.content?.trim() || describeAttachments(last.attachments),
+            preview: last.deletedForEveryone
+              ? 'This message was deleted'
+              : last.content?.trim() || describeAttachments(last.attachments),
           }
         : last,
       unreadCount: conv.unreadCount,
@@ -155,7 +182,38 @@ export const getConversations = asyncHandler(async (req, res) => {
     };
   });
 
-  sendSuccess(res, { conversations: enriched }, 'Conversations retrieved.');
+  /**
+   * A cleared thread stays out of the list until something new arrives.
+   *
+   * Deleting a chat should leave no row behind, but the messages are still there for
+   * the other participant - so the row is suppressed while its newest message predates
+   * the clear, and reappears the moment they write again. Which is what somebody
+   * expects: deleting a conversation is not blocking a person.
+   */
+  const visible = enriched.filter((row) => {
+    const state = stateFor.get(row.conversationId);
+    if (!state?.clearedAt) return true;
+    const last = row.lastMessage?.createdAt;
+    return !!last && new Date(last).getTime() > new Date(state.clearedAt).getTime();
+  });
+
+  /**
+   * Pinned first, most recently pinned above the rest of them.
+   *
+   * Sorted here rather than in the aggregation because the pins live in another
+   * collection and the list is already in memory - at a person's number of threads
+   * this is cheaper than the join would be.
+   */
+  visible.sort((a, b) => {
+    if (!!a.pinnedAt !== !!b.pinnedAt) return a.pinnedAt ? -1 : 1;
+    if (a.pinnedAt && b.pinnedAt) {
+      return new Date(b.pinnedAt).getTime() - new Date(a.pinnedAt).getTime();
+    }
+    const at = (row) => new Date(row.lastMessage?.createdAt ?? 0).getTime();
+    return at(b) - at(a);
+  });
+
+  sendSuccess(res, { conversations: visible }, 'Conversations retrieved.');
 });
 
 // ── GET /api/v1/chat/messages/:conversationId ─────────────────────────────────
@@ -299,7 +357,67 @@ const WITHDRAW_WINDOW_MS = 60 * 60 * 1000;
  */
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
 
-// ── GET /api/v1/chat/messages/:conversationId/search?q= ───────────────────────
+// -- POST /api/v1/chat/conversations/actions ----------------------------------
+/**
+ * Pin, unpin, mute, unmute or clear several conversations at once.
+ *
+ * One endpoint taking a list rather than one call per conversation, because the screen
+ * that uses it selects several and acts on them together - and five taps of a bulk
+ * action should not be five round trips on a connection where each one is a visible
+ * pause.
+ *
+ * Every action is idempotent and scoped to the caller's own state, so nothing here can
+ * change what the other participant sees.
+ */
+export const updateConversations = asyncHandler(async (req, res) => {
+  const profile = await Profile.findOne({ userId: req.user.id }).select('_id');
+  if (!profile) throw new AppError('Profile not found.', 404);
+
+  const { conversationIds, action, mutedUntil } = req.body;
+  const ids = [...new Set((conversationIds ?? []).map(String))].slice(0, 50);
+  if (!ids.length) throw new AppError('Nothing was selected.', 400);
+
+  /**
+   * Only threads this person is actually in.
+   *
+   * These ids are client-supplied strings rather than document ids, so without this a
+   * caller could pin - and worse, mark cleared - a conversation between two other
+   * people. It would not leak the messages, but it would let anybody write rows
+   * against somebody else's thread.
+   */
+  const mine = await Message.distinct('conversationId', {
+    conversationId: { $in: ids },
+    $or: [{ senderId: profile._id }, { receiverId: profile._id }],
+  });
+  if (!mine.length) throw new AppError('Conversation not found or access denied.', 404);
+
+  const now = new Date();
+  const changes = {
+    pin: { pinnedAt: now },
+    unpin: { pinnedAt: null },
+    mute: { mutedUntil: mutedUntil ? new Date(mutedUntil) : null },
+    unmute: { mutedUntil: null },
+    // Clearing is a line in time, not a bulk write over every message - so a thread of
+    // four thousand messages costs one document either way.
+    clear: { clearedAt: now },
+  }[action];
+
+  if (!changes) throw new AppError('Unknown action.', 400);
+
+  await ConversationState.bulkWrite(
+    mine.map((conversationId) => ({
+      updateOne: {
+        filter: { profileId: profile._id, conversationId },
+        update: { $set: changes },
+        upsert: true,
+      },
+    }))
+  );
+
+  sendSuccess(res, { updated: mine.length }, 'Done.');
+});
+
+// -- GET /api/v1/chat/messages/:conversationId/search?q= ----------------------──
 /**
  * Find something somebody said in this thread.
  *
@@ -646,9 +764,27 @@ export const getMessages = asyncHandler(async (req, res) => {
     }
   }
 
+  /**
+   * A cleared thread starts after the line somebody drew.
+   *
+   * The messages are untouched for the other participant; this reader simply does not
+   * see what came before they cleared it.
+   */
+  const state = await ConversationState.findOne({
+    profileId: profile._id,
+    conversationId,
+  })
+    .select('clearedAt')
+    .lean();
+
+  const scope = {
+    conversationId,
+    ...(state?.clearedAt ? { createdAt: { $gt: state.clearedAt } } : {}),
+  };
+
   const [total, messages] = await Promise.all([
-    Message.countDocuments({ conversationId }),
-    Message.find({ conversationId })
+    Message.countDocuments(scope),
+    Message.find(scope)
       .sort({ createdAt: -1 }) // newest first; client reverses for display
       .skip(skip)
       .limit(limit)
