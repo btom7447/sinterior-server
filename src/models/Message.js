@@ -132,6 +132,19 @@ const messageSchema = new mongoose.Schema(
      * did. A stated fact cannot invert.
      */
     deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Profile', default: null },
+
+    /**
+     * Passed on from somewhere else.
+     *
+     * Marked rather than silent, because a forwarded quote is a different claim
+     * from a first-hand one: "the tiler said N40,000" carries weight that
+     * "somebody said N40,000" does not, and a thread that hides the difference is
+     * a thread somebody can be misled by. The origin is not named — only that it
+     * was forwarded — which is what WhatsApp does and is the right amount of
+     * disclosure: enough to judge the claim, not enough to expose whose private
+     * thread it came from.
+     */
+    forwarded: { type: Boolean, default: false },
     isRead: {
       type: Boolean,
       default: false,

@@ -288,6 +288,75 @@ export const reportConversation = asyncHandler(async (req, res) => {
  */
 const WITHDRAW_WINDOW_MS = 60 * 60 * 1000;
 
+// ── POST /api/v1/chat/messages/:messageId/forward ─────────────────────────────
+/**
+ * Pass a message on to another conversation.
+ *
+ * The attachments are referenced, not re-uploaded. They are already in Cloudinary
+ * and already paid for; copying the subdocuments makes forwarding a photograph
+ * free and instant instead of a second upload of bytes that never left the server.
+ *
+ * The consequence is deliberate and worth stating: two messages then point at one
+ * asset, so withdrawing one must not destroy it. destroyAttachments is only
+ * reached from delete-for-everyone, which is guarded below by a reference count.
+ */
+export const forwardMessage = asyncHandler(async (req, res) => {
+  const profile = await Profile.findOne({ userId: req.user.id }).select('_id fullName avatarUrl');
+  if (!profile) throw new AppError('Profile not found.', 404);
+
+  const source = await Message.findById(req.params.messageId);
+  if (!source) throw new AppError('Message not found.', 404);
+
+  // Only a participant may forward it. Otherwise any message id in the database
+  // becomes a message anybody can put in their own thread.
+  const participant =
+    source.senderId.toString() === profile._id.toString() ||
+    source.receiverId.toString() === profile._id.toString();
+  if (!participant) throw new AppError('Message not found.', 404);
+
+  if (source.deletedForEveryone) {
+    throw new AppError('That message was deleted.', 400);
+  }
+
+  const { receiverId } = req.body;
+  const receiver = await Profile.findById(receiverId).select('_id fullName avatarUrl');
+  if (!receiver) throw new AppError('Recipient not found.', 404);
+  if (receiver._id.toString() === profile._id.toString()) {
+    throw new AppError('You cannot message yourself.', 400);
+  }
+
+  const conversationId = buildConversationId(profile._id, receiver._id);
+  const online = isProfileOnline(receiver._id);
+
+  const message = await Message.create({
+    conversationId,
+    senderId: profile._id,
+    receiverId: receiver._id,
+    content: source.content,
+    media: source.media,
+    // Copied wholesale: same urls, same publicIds, same metadata.
+    attachments: source.attachments,
+    forwarded: true,
+    isRead: false,
+    status: online ? 'delivered' : 'sent',
+    deliveredAt: online ? new Date() : null,
+  });
+
+  const populated = await message.populate([
+    { path: 'senderId', select: 'fullName avatarUrl' },
+    { path: 'receiverId', select: 'fullName avatarUrl' },
+  ]);
+
+  const io = req.app.get('io');
+  if (io) {
+    const payload = populated.toJSON();
+    io.to(`profile:${receiver._id}`).emit('message:new', payload);
+    io.to(`profile:${profile._id}`).emit('message:new', payload);
+  }
+
+  sendSuccess(res, { message: populated }, 'Forwarded.', 201);
+});
+
 // ── DELETE /api/v1/chat/messages/:messageId ───────────────────────────────────
 /**
  * Remove a message, from your own view or from everybody's.
@@ -346,9 +415,25 @@ export const deleteMessage = asyncHandler(async (req, res) => {
       );
     }
 
-    // The assets first: if this fails the message is still withdrawn, but an
-    // orphaned upload is a bill that keeps arriving.
-    await destroyAttachments(message.attachments);
+    /**
+     * Only destroy assets nothing else points at.
+     *
+     * Forwarding copies the attachment subdocuments rather than re-uploading, so
+     * one Cloudinary asset can belong to several messages. Destroying it because
+     * the original was withdrawn would blank a photograph in somebody else's
+     * unrelated thread — a far worse outcome than an orphaned upload.
+     */
+    const shared = message.attachments?.length
+      ? await Message.countDocuments({
+          _id: { $ne: message._id },
+          deletedForEveryone: false,
+          'attachments.publicId': {
+            $in: message.attachments.map((a) => a.publicId).filter(Boolean),
+          },
+        })
+      : 0;
+
+    if (!shared) await destroyAttachments(message.attachments);
 
     message.content = '';
     message.media = [];

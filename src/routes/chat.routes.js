@@ -6,6 +6,7 @@ import {
   getConversations,
   getMessages,
   deleteMessage,
+  forwardMessage,
   reportConversation,
   searchUserByEmail,
   sendMessage,
@@ -101,6 +102,17 @@ router.post(
   ],
   validate,
   sendMessage
+);
+
+// ── POST /api/v1/chat/messages/:messageId/forward ─────────────────────────────
+router.post(
+  '/messages/:messageId/forward',
+  [
+    param('messageId').isMongoId().withMessage('Message not found.'),
+    body('receiverId').isMongoId().withMessage('Recipient not found.'),
+  ],
+  validate,
+  forwardMessage
 );
 
 // ── DELETE /api/v1/chat/messages/:messageId ───────────────────────────────────
