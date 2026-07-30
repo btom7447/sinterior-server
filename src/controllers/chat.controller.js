@@ -121,6 +121,9 @@ export const getConversations = asyncHandler(async (req, res) => {
           // Carried so the row can say a message was deleted rather than showing an
           // empty line under the name, which reads as a thread that broke.
           deletedForEveryone: '$lastMessage.deletedForEveryone',
+          // And whether this particular reader removed it from their own view, which
+          // the other participant's row must not reflect.
+          hiddenFor: { $ifNull: ['$lastMessage.hiddenFor', []] },
           // Carried through so the row can name what was sent. A thread whose
           // last message is a spreadsheet should not read as an empty line.
           attachments: {
@@ -160,6 +163,30 @@ export const getConversations = asyncHandler(async (req, res) => {
     const last = conv.lastMessage;
     const state = stateFor.get(conv.conversationId);
 
+    /**
+     * What the row says, from this reader's point of view.
+     *
+     * Three states, not one. A withdrawn message reads the same to both sides; a
+     * message somebody removed from their own view reads as deleted to them and
+     * normally to the other participant, which is why this cannot be computed once
+     * and shared. Without it, deleting the last message left a row with a name and an
+     * empty line — which reads as a thread that broke rather than one that was tidied.
+     *
+     * Computed before hiddenFor is stripped below, which is an ordering that has to
+     * stay this way round: reading it after the delete is reading undefined.
+     */
+    const preview = !last
+      ? ''
+      : last.deletedForEveryone
+        ? 'This message was deleted'
+        : (last.hiddenFor ?? []).some((id) => String(id) === myId)
+          ? 'You deleted this message'
+          : last.content?.trim() || describeAttachments(last.attachments);
+
+    // Never sent on: whether the other participant tidied their own view is their
+    // business, and the preview has already taken ours into account.
+    if (last) delete last.hiddenFor;
+
     return {
       conversationId: conv.conversationId,
       pinnedAt: state?.pinnedAt ?? null,
@@ -172,9 +199,7 @@ export const getConversations = asyncHandler(async (req, res) => {
             ...last,
             // Named on the server so every client says the same thing, and so a
             // list row never comes back blank because the message was a file.
-            preview: last.deletedForEveryone
-              ? 'This message was deleted'
-              : last.content?.trim() || describeAttachments(last.attachments),
+            preview,
           }
         : last,
       unreadCount: conv.unreadCount,
