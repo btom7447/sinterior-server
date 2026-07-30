@@ -292,11 +292,38 @@ export const getMessages = asyncHandler(async (req, res) => {
     throw new AppError('Conversation not found or access denied.', 404);
   }
 
-  // Mark all unread messages sent TO this user as read
-  await Message.updateMany(
+  /**
+   * Mark everything sent to this person as read, and tell the sender.
+   *
+   * The telling is the part that was missing. Messages were marked here and the
+   * sender found out on their next poll, up to ten seconds later — which is
+   * exactly why the second tick felt slow next to WhatsApp, where it lands the
+   * moment the other person opens the thread.
+   *
+   * Only emitted when something actually changed, or every fetch of an
+   * already-read thread would fire an event at somebody for nothing.
+   */
+  const read = await Message.updateMany(
     { conversationId, receiverId: profile._id, isRead: false },
     { $set: { isRead: true, status: 'read', readAt: new Date() } }
   );
+
+  if (read.modifiedCount > 0) {
+    const io = req.app.get('io');
+    if (io) {
+      // The counterpart is whoever is not us in this deterministic pair id.
+      const otherId = conversationId
+        .split('_')
+        .find((part) => part !== profile._id.toString());
+
+      if (otherId) {
+        io.to(`profile:${otherId}`).emit('message:read', {
+          conversationId,
+          readerId: profile._id.toString(),
+        });
+      }
+    }
+  }
 
   const [total, messages] = await Promise.all([
     Message.countDocuments({ conversationId }),
