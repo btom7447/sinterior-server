@@ -7,6 +7,9 @@ import { sendSuccess } from '../utils/apiResponse.js';
 
 import { resolveUploadUrl } from '../utils/resolveUrl.js';
 import escapeRegex from '../utils/escapeRegex.js';
+import Pin from '../models/Pin.js';
+import Follow from '../models/Follow.js';
+import { isProfileOnline } from '../socket.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -19,7 +22,18 @@ export const searchProfiles = asyncHandler(async (req, res) => {
   if (q.length < 1) return sendSuccess(res, { profiles: [] }, 'Profiles retrieved.');
 
   const pattern = new RegExp(escapeRegex(q), 'i');
-  const profiles = await Profile.find({ fullName: pattern })
+
+  // Staff are deliberately unfindable. An admin account in a name search is an
+  // invitation to message the platform about a dispute in a private thread,
+  // where nothing is logged against the job and nobody is on shift. Admins can
+  // still open a conversation from their side; the way in from a member's side
+  // is the report control in the chat header.
+  const me = await Profile.findOne({ userId: req.user?.id }).select('_id').lean();
+  const profiles = await Profile.find({
+    fullName: pattern,
+    role: { $ne: 'admin' },
+    ...(me ? { _id: { $ne: me._id } } : {}),
+  })
     .select('fullName avatarUrl role')
     .limit(20)
     .lean();
@@ -33,6 +47,53 @@ export const searchProfiles = asyncHandler(async (req, res) => {
     .map((p) => ({ ...p, avatarUrl: resolveUploadUrl(p.avatarUrl) }));
 
   sendSuccess(res, { profiles: ranked }, 'Profiles retrieved.');
+});
+
+// ── GET /api/v1/profiles/:profileId/public ────────────────────────────────────
+/**
+ * Anybody's public profile, whatever their role.
+ *
+ * The artisan endpoints only answer for artisans, which left every other name in
+ * the app unclickable — a client who comments on a job has no page, so there is
+ * no way to see who they are or message them without already having a thread.
+ *
+ * Deliberately thin. Enough to decide whether to talk to somebody, and nothing
+ * that would turn a comment thread into a way to harvest the directory: no
+ * email, no phone, no location beyond the city they chose to publish.
+ */
+export const getPublicProfile = asyncHandler(async (req, res) => {
+  const { profileId } = req.params;
+
+  const profile = await Profile.findById(profileId)
+    .select('fullName avatarUrl role city state bio createdAt')
+    .lean();
+  if (!profile) throw new AppError('Profile not found.', 404);
+
+  const [pins, followers] = await Promise.all([
+    // Only published work. A draft is not a portfolio.
+    Pin.countDocuments({ author: profile._id, status: 'active' }),
+    Follow.countDocuments({ followed: profile._id }),
+  ]);
+
+  sendSuccess(
+    res,
+    {
+      profile: {
+        id: profile._id,
+        fullName: profile.fullName,
+        avatarUrl: resolveUploadUrl(profile.avatarUrl),
+        role: profile.role,
+        isStaff: profile.role === 'admin',
+        isOnline: isProfileOnline(profile._id),
+        city: profile.city ?? null,
+        state: profile.state ?? null,
+        bio: profile.bio ?? '',
+        joinedAt: profile.createdAt,
+        counts: { pins, followers },
+      },
+    },
+    'Profile retrieved.'
+  );
 });
 
 // ── GET /api/v1/profiles/me ───────────────────────────────────────────────────

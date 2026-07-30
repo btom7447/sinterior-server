@@ -1,7 +1,14 @@
 import { Router } from 'express';
 import { body, param, query } from 'express-validator';
-import { getConversationMeta,
-  getConversations, getMessages, sendMessage, searchUserByEmail } from '../controllers/chat.controller.js';
+import {
+  getConversationMeta,
+  getConversationWith,
+  getConversations,
+  getMessages,
+  reportConversation,
+  searchUserByEmail,
+  sendMessage,
+} from '../controllers/chat.controller.js';
 import { protect } from '../middleware/auth.js';
 import { parseAttachments, uploadAttachments } from '../middleware/attachmentUpload.js';
 import validate from '../middleware/validate.js';
@@ -17,8 +24,40 @@ router.get('/search', searchUserByEmail);
 // ── GET /api/v1/chat/conversations ────────────────────────────────────────────
 router.get('/conversations', getConversations);
 
+// ── GET /api/v1/chat/with/:profileId — a thread that may not exist yet ───────
+// Declared before /conversations/:conversationId so a profile id is never read
+// as a conversation id.
+router.get(
+  '/with/:profileId',
+  [param('profileId').isMongoId().withMessage('Recipient not found.')],
+  validate,
+  getConversationWith
+);
+
 // ── GET /api/v1/chat/conversations/:conversationId — thread metadata ─────────
 router.get('/conversations/:conversationId', getConversationMeta);
+
+// ── POST /api/v1/chat/conversations/:conversationId/report ───────────────────
+router.post(
+  '/conversations/:conversationId/report',
+  [
+    param('conversationId').notEmpty().isString(),
+    body('reason')
+      .isIn([
+        'harassment',
+        'scam',
+        'off_platform_payment',
+        'no_show',
+        'impersonation',
+        'spam',
+        'other',
+      ])
+      .withMessage('Pick a reason.'),
+    body('note').optional().isString().trim().isLength({ max: 1000 }),
+  ],
+  validate,
+  reportConversation
+);
 
 // ── GET /api/v1/chat/messages/:conversationId ─────────────────────────────────
 router.get(

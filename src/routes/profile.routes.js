@@ -1,6 +1,14 @@
 import { Router } from 'express';
 import { body } from 'express-validator';
-import { getMe, updateMe, uploadAvatar, getSettings, updateSettings, searchProfiles } from '../controllers/profile.controller.js';
+import {
+  getMe,
+  getPublicProfile,
+  updateMe,
+  uploadAvatar,
+  getSettings,
+  updateSettings,
+  searchProfiles,
+} from '../controllers/profile.controller.js';
 import { protect } from '../middleware/auth.js';
 import { uploadLimiter } from '../middleware/rateLimiter.js';
 import { uploadSingle, resizeImage } from '../middleware/upload.js';
@@ -16,6 +24,10 @@ router.get('/me', getMe);
 
 // ── GET /api/v1/profiles/search ───────────────────────────────────────────────
 router.get('/search', searchProfiles);
+
+// ── GET /api/v1/profiles/:profileId/public ────────────────────────────────────
+// After /me and /search, so neither word is ever read as an id.
+router.get('/:profileId/public', getPublicProfile);
 
 // ── PATCH /api/v1/profiles/me ─────────────────────────────────────────────────
 router.patch(

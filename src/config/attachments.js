@@ -70,8 +70,16 @@ export const MAX_BYTES = {
 /** The largest anything may be, which is what Multer is given. */
 export const MAX_ANY_BYTES = Math.max(...Object.values(MAX_BYTES));
 
-/** How many files may ride on one message. */
-export const MAX_PER_MESSAGE = 10;
+/**
+ * How many files may ride on one message.
+ *
+ * Five, not ten. Ten filled the composer tray past what fits on screen, and the
+ * bubble only draws four tiles before it starts counting the rest — so the
+ * upload somebody paid for on metered data arrived as "+6" they had to tap
+ * through. Five is a set of site photographs, which is what people actually
+ * send, and anything larger reads better as two messages anyway.
+ */
+export const MAX_PER_MESSAGE = 5;
 
 /** Every mime type the server will take, for the client to check against first. */
 export const ALLOWED_MIMES = Object.keys(TYPES);

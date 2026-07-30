@@ -60,6 +60,16 @@ const removeOnline = (profileId, socketId) => {
 
 const isOnline = (profileId) => onlineUsers.has(profileId.toString());
 
+/**
+ * Whether a profile has a live socket right now.
+ *
+ * Exported so REST responses can carry presence. A chat list that has to open
+ * every thread to find out who is around is not telling anybody anything, and
+ * on a marketplace "is this artisan at their phone" decides whether you wait for
+ * an answer or call somebody else.
+ */
+export const isProfileOnline = (profileId) => (profileId ? isOnline(profileId) : false);
+
 const emitToUser = (io, profileId, event, data) => {
   const sockets = onlineUsers.get(profileId.toString());
   if (sockets) {

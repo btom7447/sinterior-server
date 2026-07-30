@@ -7,7 +7,30 @@ import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import { resolveUploadUrl, resolveImageUrls } from '../utils/resolveUrl.js';
 import { describeAttachments } from '../config/attachments.js';
+import { isProfileOnline } from '../socket.js';
+import ChatReport from '../models/ChatReport.js';
 
+
+/**
+ * How a counterpart is described, everywhere.
+ *
+ * Presence and staff status are part of it because both change how a member
+ * reads the thread: "online" decides whether they wait for an answer, and the
+ * staff badge is the only thing that tells them a stranger claiming to be
+ * Sintherior actually is.
+ */
+const shapeParticipant = (profile) =>
+  profile
+    ? {
+        id: profile._id,
+        fullName: profile.fullName,
+        avatarUrl: resolveUploadUrl(profile.avatarUrl),
+        role: profile.role,
+        /** Platform staff. Drawn as a verified badge, never as an ordinary role. */
+        isStaff: profile.role === 'admin',
+        isOnline: isProfileOnline(profile._id),
+      }
+    : null;
 
 /**
  * Build a deterministic conversationId from two profile IDs.
@@ -126,13 +149,7 @@ export const getConversations = asyncHandler(async (req, res) => {
           }
         : last,
       unreadCount: conv.unreadCount,
-      participant: otherProfile
-        ? {
-            id: otherProfile._id,
-            fullName: otherProfile.fullName,
-            avatarUrl: resolveUploadUrl(otherProfile.avatarUrl),
-          }
-        : null,
+      participant: shapeParticipant(otherProfile),
     };
   });
 
@@ -162,17 +179,98 @@ export const getConversationMeta = asyncHandler(async (req, res) => {
       : anyMessage.senderId;
   const other = await Profile.findById(otherId).select('fullName avatarUrl role');
 
-  sendSuccess(res, {
-    myProfileId: profile._id,
-    participant: other
-      ? {
-          id: other._id,
-          fullName: other.fullName,
-          avatarUrl: resolveUploadUrl(other.avatarUrl),
-          role: other.role,
-        }
-      : null,
-  }, 'Conversation metadata retrieved.');
+  sendSuccess(
+    res,
+    { myProfileId: profile._id, conversationId, participant: shapeParticipant(other) },
+    'Conversation metadata retrieved.'
+  );
+});
+
+// ── GET /api/v1/chat/with/:profileId ──────────────────────────────────────────
+/**
+ * Metadata for a thread that may not exist yet.
+ *
+ * Starting a conversation used to be impossible from the contact book: the app
+ * navigated with the person's profile id where a conversation id belonged, the
+ * meta lookup found no messages, 404'd, and the composer stayed disabled — so
+ * the one screen whose whole purpose is to send a first message could not send
+ * one.
+ *
+ * This resolves the pair instead of looking for history. The profile id is still
+ * untrusted input, so the participant returned is read from the database rather
+ * than echoed back, which keeps the rule that a client never supplies the
+ * identity it is shown.
+ */
+export const getConversationWith = asyncHandler(async (req, res) => {
+  const profile = await Profile.findOne({ userId: req.user.id }).select('_id');
+  if (!profile) throw new AppError('Profile not found.', 404);
+
+  const { profileId } = req.params;
+  if (!mongoose.isValidObjectId(profileId)) throw new AppError('Recipient not found.', 404);
+  if (profileId === profile._id.toString()) {
+    throw new AppError('You cannot message yourself.', 400);
+  }
+
+  const other = await Profile.findById(profileId).select('fullName avatarUrl role');
+  if (!other) throw new AppError('Recipient not found.', 404);
+
+  sendSuccess(
+    res,
+    {
+      myProfileId: profile._id,
+      conversationId: buildConversationId(profile._id, other._id),
+      participant: shapeParticipant(other),
+    },
+    'Conversation metadata retrieved.'
+  );
+});
+
+// ── POST /api/v1/chat/conversations/:conversationId/report ───────────────────
+/**
+ * Report a conversation to platform staff.
+ *
+ * Only a participant may report, and the person reported is read from the thread
+ * rather than from the body — a client naming who it is complaining about is a
+ * client that can file a complaint against anybody.
+ */
+export const reportConversation = asyncHandler(async (req, res) => {
+  const profile = await Profile.findOne({ userId: req.user.id }).select('_id');
+  if (!profile) throw new AppError('Profile not found.', 404);
+
+  const { conversationId } = req.params;
+  const { reason, note } = req.body;
+
+  const anyMessage = await Message.findOne({
+    conversationId,
+    $or: [{ senderId: profile._id }, { receiverId: profile._id }],
+  })
+    .sort({ createdAt: -1 })
+    .select('senderId receiverId createdAt');
+  if (!anyMessage) throw new AppError('Conversation not found or access denied.', 404);
+
+  const reported =
+    anyMessage.senderId.toString() === profile._id.toString()
+      ? anyMessage.receiverId
+      : anyMessage.senderId;
+
+  try {
+    await ChatReport.create({
+      conversationId,
+      reporter: profile._id,
+      reported,
+      reason,
+      note: note ?? '',
+      lastMessageAt: anyMessage.createdAt,
+    });
+  } catch (err) {
+    // The partial unique index rejected it: this person already has an open
+    // report on this thread. That is the state they wanted, so say so plainly
+    // rather than failing.
+    if (err.code !== 11000) throw err;
+    return sendSuccess(res, null, 'You have already reported this conversation.');
+  }
+
+  sendSuccess(res, null, 'Reported. Our team will take a look.');
 });
 
 export const getMessages = asyncHandler(async (req, res) => {
