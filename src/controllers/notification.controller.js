@@ -1,4 +1,6 @@
 import Notification from '../models/Notification.js';
+import Profile from '../models/Profile.js';
+import { forgetToken, saveToken } from '../services/push.service.js';
 import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
@@ -63,4 +65,35 @@ export const markAllRead = asyncHandler(async (req, res) => {
     { modifiedCount: result.modifiedCount },
     `${result.modifiedCount} notification(s) marked as read.`
   );
+});
+
+// ── POST /api/v1/notifications/push-token ─────────────────────────────────────
+// A device saying where to reach it. Idempotent: the app re-registers on every
+// launch, because a token can be rotated by the OS without the app being told.
+export const registerPushToken = asyncHandler(async (req, res) => {
+  const { token, platform, deviceId } = req.body;
+  if (!token || typeof token !== 'string') {
+    throw new AppError('A push token is required.', 400);
+  }
+
+  const profile = await Profile.findOne({ userId: req.user.id }).select('_id').lean();
+
+  await saveToken({
+    token: token.trim(),
+    userId: req.user.id,
+    profileId: profile?._id ?? null,
+    platform: ['ios', 'android', 'web'].includes(platform) ? platform : null,
+    deviceId: typeof deviceId === 'string' ? deviceId : null,
+  });
+
+  sendSuccess(res, null, 'Push token registered.');
+});
+
+// ── DELETE /api/v1/notifications/push-token ───────────────────────────────────
+// Sign-out. A shared phone must not keep delivering the previous person's
+// notifications, which is a privacy failure rather than an inconvenience.
+export const unregisterPushToken = asyncHandler(async (req, res) => {
+  const { token } = req.body ?? {};
+  if (token) await forgetToken(String(token).trim());
+  sendSuccess(res, null, 'Push token removed.');
 });

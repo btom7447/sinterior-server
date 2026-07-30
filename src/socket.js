@@ -16,6 +16,33 @@ const buildConversationId = (idA, idB) =>
  */
 const onlineUsers = new Map();
 
+/**
+ * The same, keyed by account rather than by profile.
+ *
+ * Notifications are addressed to a user; presence is tracked by profile. Push
+ * needs to ask "is this account looking at the app right now" before buzzing a
+ * phone that is already in somebody's hand, and that question is about the
+ * account.
+ */
+const onlineAccounts = new Map();
+
+const addAccount = (userId, socketId) => {
+  const id = userId.toString();
+  if (!onlineAccounts.has(id)) onlineAccounts.set(id, new Set());
+  onlineAccounts.get(id).add(socketId);
+};
+
+const removeAccount = (userId, socketId) => {
+  const id = userId.toString();
+  const sockets = onlineAccounts.get(id);
+  if (!sockets) return;
+  sockets.delete(socketId);
+  if (sockets.size === 0) onlineAccounts.delete(id);
+};
+
+/** Whether this account has a live socket. Used to suppress a redundant push. */
+export const isUserOnline = (userId) => onlineAccounts.has(String(userId));
+
 const addOnline = (profileId, socketId) => {
   const id = profileId.toString();
   if (!onlineUsers.has(id)) onlineUsers.set(id, new Set());
@@ -89,6 +116,7 @@ export default function initSocket(server) {
 
     // Join a user-specific room for notifications (keyed by userId, not profileId)
     socket.join(`user:${socket.user.id}`);
+    addAccount(socket.user.id, socket.id);
 
     // Join a profile-specific room so REST controllers can emit chat events
     socket.join(`profile:${profileId}`);
@@ -274,6 +302,7 @@ export default function initSocket(server) {
     // ── Disconnect ────────────────────────────────────────────────────────
     socket.on('disconnect', () => {
       removeOnline(profileId, socket.id);
+      removeAccount(socket.user.id, socket.id);
       if (!isOnline(profileId)) {
         socket.broadcast.emit('user:offline', { profileId });
       }

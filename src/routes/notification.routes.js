@@ -1,6 +1,12 @@
 import { Router } from 'express';
 import { param, query } from 'express-validator';
-import { list, markRead, markAllRead } from '../controllers/notification.controller.js';
+import {
+  list,
+  markRead,
+  markAllRead,
+  registerPushToken,
+  unregisterPushToken,
+} from '../controllers/notification.controller.js';
 import { protect } from '../middleware/auth.js';
 import validate from '../middleware/validate.js';
 
@@ -19,6 +25,11 @@ router.get(
   validate,
   list
 );
+
+// ── Push tokens ───────────────────────────────────────────────────────────────
+// Declared before /:id/read so "push-token" is never read as a Mongo id.
+router.post('/push-token', registerPushToken);
+router.delete('/push-token', unregisterPushToken);
 
 // ── PATCH /api/v1/notifications/mark-all-read ─────────────────────────────────
 // Must be declared BEFORE /:id/read so Express doesn't try to match
