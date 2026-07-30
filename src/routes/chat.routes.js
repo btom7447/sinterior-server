@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { body, param, query } from 'express-validator';
 import {
+  getConversationMedia,
   getConversationMeta,
   getConversationWith,
   getConversations,
@@ -56,6 +57,14 @@ router.get(
 
 // ── GET /api/v1/chat/conversations/:conversationId — thread metadata ─────────
 router.get('/conversations/:conversationId', getConversationMeta);
+
+// -- GET /api/v1/chat/conversations/:conversationId/media ---------------------
+router.get(
+  '/conversations/:conversationId/media',
+  [param('conversationId').notEmpty().isString()],
+  validate,
+  getConversationMedia
+);
 
 // ── POST /api/v1/chat/conversations/:conversationId/report ───────────────────
 router.post(

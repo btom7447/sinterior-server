@@ -382,6 +382,83 @@ const WITHDRAW_WINDOW_MS = 60 * 60 * 1000;
  */
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
 
+// -- GET /api/v1/chat/conversations/:conversationId/media ---------------------
+/**
+ * Everything ever attached to one conversation.
+ *
+ * The question this answers is "where is that photograph of the wall" — asked days
+ * later, about a thread with four hundred messages in it. Scrolling for it is the
+ * thing people give up on, and giving up means asking the other person to send it
+ * again, which is how a platform ends up with four copies of the same picture.
+ *
+ * Grouped by kind because the three are looked for differently: photographs are
+ * recognised at a glance in a grid, and a document is found by its name in a list.
+ */
+export const getConversationMedia = asyncHandler(async (req, res) => {
+  const profile = await Profile.findOne({ userId: req.user.id }).select('_id');
+  if (!profile) throw new AppError('Profile not found.', 404);
+
+  const { conversationId } = req.params;
+
+  const participantCheck = await Message.findOne({
+    conversationId,
+    $or: [{ senderId: profile._id }, { receiverId: profile._id }],
+  }).select('_id');
+  if (!participantCheck) throw new AppError('Conversation not found or access denied.', 404);
+
+  // Respects both kinds of deletion and the clear line, so a thread somebody tidied
+  // does not quietly keep offering what they removed.
+  const state = await ConversationState.findOne({
+    profileId: profile._id,
+    conversationId,
+  })
+    .select('clearedAt')
+    .lean();
+
+  const messages = await Message.find({
+    conversationId,
+    deletedForEveryone: false,
+    hiddenFor: { $ne: profile._id },
+    'attachments.0': { $exists: true },
+    ...(state?.clearedAt ? { createdAt: { $gt: state.clearedAt } } : {}),
+  })
+    .sort({ createdAt: -1 })
+    // Enough for the grid and the lists without paging: a thread with more than four
+    // hundred attachments is not the case worth optimising for yet.
+    .limit(400)
+    .select('attachments createdAt senderId')
+    .lean();
+
+  const media = [];
+  const files = [];
+  const voice = [];
+
+  for (const message of messages) {
+    for (const attachment of message.attachments ?? []) {
+      // The message's own timestamp, since an attachment has none of its own and
+      // "when was this sent" is most of how somebody recognises it.
+      const entry = { ...attachment, messageId: message._id, createdAt: message.createdAt };
+
+      if (attachment.kind === 'image' || attachment.kind === 'video') media.push(entry);
+      else if (attachment.kind === 'voice') voice.push(entry);
+      else files.push(entry);
+    }
+  }
+
+  const resolve = (list) =>
+    list.map((entry) => ({
+      ...entry,
+      url: resolveUploadUrl(entry.url),
+      thumbnailUrl: entry.thumbnailUrl ? resolveUploadUrl(entry.thumbnailUrl) : null,
+    }));
+
+  sendSuccess(
+    res,
+    { media: resolve(media), files: resolve(files), voice: resolve(voice) },
+    'Shared media retrieved.'
+  );
+});
+
 // -- POST /api/v1/chat/messages/forward ---------------------------------------
 /**
  * Forward several messages to one conversation.
