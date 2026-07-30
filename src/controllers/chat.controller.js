@@ -355,11 +355,17 @@ export const deleteMessage = asyncHandler(async (req, res) => {
     message.attachments = [];
     message.deletedForEveryone = true;
     message.deletedAt = new Date();
+    message.deletedBy = profile._id;
     await message.save();
 
     const io = req.app.get('io');
     if (io) {
-      const payload = { conversationId: message.conversationId, messageId: message._id };
+      const payload = {
+        conversationId: message.conversationId,
+        messageId: message._id,
+        // Named, so neither side has to guess whose deletion it was.
+        deletedBy: profile._id.toString(),
+      };
       io.to(`profile:${message.senderId}`).emit('message:deleted', payload);
       io.to(`profile:${message.receiverId}`).emit('message:deleted', payload);
     }
@@ -454,7 +460,15 @@ export const getMessages = asyncHandler(async (req, res) => {
     delete json.hiddenFor;
 
     if (!deletedForMe) return json;
-    return { ...json, deletedForMe: true, content: '', media: [], attachments: [] };
+    return {
+      ...json,
+      deletedForMe: true,
+      // Their own tidying, so they are the one who did it.
+      deletedBy: me,
+      content: '',
+      media: [],
+      attachments: [],
+    };
   });
 
   const pagination = buildPaginationMeta(total, page, limit);

@@ -122,6 +122,16 @@ const messageSchema = new mongoose.Schema(
      */
     deletedForEveryone: { type: Boolean, default: false },
     deletedAt: { type: Date, default: null },
+
+    /**
+     * Who withdrew it.
+     *
+     * Recorded rather than inferred. The client used to work this out by comparing
+     * the message's sender to itself, which is one boolean away from telling each
+     * person that the other's deletion was their own — and that is exactly what it
+     * did. A stated fact cannot invert.
+     */
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Profile', default: null },
     isRead: {
       type: Boolean,
       default: false,
@@ -183,6 +193,17 @@ function resolveAttachments(attachments) {
 
 // At least content or something attached must be present.
 messageSchema.pre('validate', function (next) {
+  /**
+   * A withdrawn message is deliberately empty.
+   *
+   * This rule exists to stop a blank message being *created*, and it was rejecting
+   * the save that empties one on the way out — so "delete for everyone" failed with
+   * "Message must have content or media" every single time, from the one code path
+   * whose entire job is to remove the content. The row is kept on purpose; the
+   * emptiness is the point.
+   */
+  if (this.deletedForEveryone) return next();
+
   const hasFiles = this.media?.length > 0 || this.attachments?.length > 0;
   if (!this.content?.trim() && !hasFiles) {
     return next(new Error('Message must have content or media.'));
