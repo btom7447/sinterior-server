@@ -11,6 +11,8 @@ import Pin from '../models/Pin.js';
 import ArtisanProfile from '../models/ArtisanProfile.js';
 import SupplierProfile from '../models/SupplierProfile.js';
 import Product from '../models/Product.js';
+import Message from '../models/Message.js';
+import Appointment from '../models/Appointment.js';
 import Follow from '../models/Follow.js';
 import { isProfileOnline } from '../socket.js';
 
@@ -64,6 +66,71 @@ export const searchProfiles = asyncHandler(async (req, res) => {
  * that would turn a comment thread into a way to harvest the directory: no
  * email, no phone, no location beyond the city they chose to publish.
  */
+/**
+ * How quickly somebody answers, measured rather than claimed.
+ *
+ * "Usually replies within an hour" is one of the most persuasive things a marketplace
+ * profile can say, and it is worthless if it is self-reported. This reads it out of the
+ * messages: for each of their recent conversations, the gap between the last message
+ * somebody sent them and their first reply after it.
+ *
+ * The median, not the mean. One reply written three days later would drag an average
+ * into uselessness, and what a client wants to know is the typical case rather than the
+ * arithmetic one.
+ *
+ * Null when there is too little to be honest about. Four conversations is the floor —
+ * below that a single fast reply would advertise a speed nobody can rely on.
+ */
+const RESPONSE_SAMPLE = 40;
+const RESPONSE_MIN_CONVERSATIONS = 4;
+
+async function medianResponseMs(profileId) {
+  const recent = await Message.find({
+    $or: [{ senderId: profileId }, { receiverId: profileId }],
+  })
+    .sort({ createdAt: -1 })
+    .limit(600)
+    .select('conversationId senderId createdAt')
+    .lean();
+
+  if (!recent.length) return null;
+
+  // Oldest first per conversation, so a reply can be recognised as following something.
+  const byConversation = new Map();
+  for (const message of recent.reverse()) {
+    if (!byConversation.has(message.conversationId)) byConversation.set(message.conversationId, []);
+    byConversation.get(message.conversationId).push(message);
+  }
+
+  const gaps = [];
+  for (const messages of byConversation.values()) {
+    let waitingSince = null;
+
+    for (const message of messages) {
+      const mine = String(message.senderId) === String(profileId);
+
+      if (!mine) {
+        // Their first unanswered message is the one the clock starts on.
+        if (waitingSince === null) waitingSince = new Date(message.createdAt).getTime();
+        continue;
+      }
+
+      if (waitingSince !== null) {
+        gaps.push(new Date(message.createdAt).getTime() - waitingSince);
+        waitingSince = null;
+        if (gaps.length >= RESPONSE_SAMPLE) break;
+      }
+    }
+  }
+
+  if (byConversation.size < RESPONSE_MIN_CONVERSATIONS || gaps.length < RESPONSE_MIN_CONVERSATIONS) {
+    return null;
+  }
+
+  gaps.sort((a, b) => a - b);
+  return gaps[Math.floor(gaps.length / 2)];
+}
+
 export const getPublicProfile = asyncHandler(async (req, res) => {
   const { profileId } = req.params;
 
@@ -82,7 +149,7 @@ export const getPublicProfile = asyncHandler(async (req, res) => {
    * an artisan's. Zeroes are returned rather than omitted — the screen decides what a
    * zero should look like, and that is not a decision the server should make for it.
    */
-  const [pins, followers, following, iFollow, artisan, supplier, products] =
+  const [pins, followers, following, iFollow, artisan, supplier, products, responseMs] =
     await Promise.all([
       // Only published work. A draft is not a portfolio.
       Pin.countDocuments({ author: profile._id, status: 'active' }),
@@ -107,6 +174,12 @@ export const getPublicProfile = asyncHandler(async (req, res) => {
       profile.role === 'supplier'
         ? Product.countDocuments({ supplierId: profile._id })
         : 0,
+
+      // Only for the people somebody is deciding whether to rely on. A client's reply
+      // speed is nobody's business and would be a strange thing to publish.
+      ['artisan', 'supplier'].includes(profile.role)
+        ? medianResponseMs(profile._id)
+        : null,
     ]);
 
   sendSuccess(
@@ -124,6 +197,13 @@ export const getPublicProfile = asyncHandler(async (req, res) => {
         bio: profile.bio ?? '',
         joinedAt: profile.createdAt,
         counts: { pins, followers, following, products },
+
+        /**
+         * Typical reply time in milliseconds, or null when there is too little to say.
+         * Phrased on the client, since "within an hour" and "about a day" are the same
+         * fact at different scales.
+         */
+        responseMs,
 
         /** Whether the caller already follows them, so the button knows its own state. */
         isFollowing: !!iFollow,
@@ -166,7 +246,54 @@ export const getPublicProfile = asyncHandler(async (req, res) => {
   );
 });
 
-// ── GET /api/v1/profiles/me ───────────────────────────────────────────────────
+// -- GET /api/v1/profiles/:profileId/availability ------------------------------
+/**
+ * Which of the next two weeks an artisan already has work on.
+ *
+ * Not a booking calendar — it does not know their working hours, their travel, or the
+ * jobs they have taken off the platform. It knows what is scheduled here, which is enough
+ * for the question a client actually asks: "can you come Thursday?"
+ *
+ * Returned as a list of days with a count rather than as free/busy, because one
+ * appointment on a Tuesday does not make the Tuesday unavailable — and pretending it does
+ * would lose the artisan work.
+ */
+export const getAvailability = asyncHandler(async (req, res) => {
+  const { profileId } = req.params;
+  if (!mongoose.isValidObjectId(profileId)) throw new AppError('Profile not found.', 404);
+
+  const from = new Date();
+  from.setHours(0, 0, 0, 0);
+  const to = new Date(from);
+  to.setDate(to.getDate() + 14);
+
+  const appointments = await Appointment.find({
+    artisanId: profileId,
+    status: 'scheduled',
+    date: { $gte: from, $lt: to },
+  })
+    .select('date')
+    .lean();
+
+  // Counted per day, keyed by date so the client does not have to bucket them itself.
+  const byDay = new Map();
+  for (const appointment of appointments) {
+    const key = new Date(appointment.date).toISOString().slice(0, 10);
+    byDay.set(key, (byDay.get(key) ?? 0) + 1);
+  }
+
+  const days = [];
+  for (let i = 0; i < 14; i += 1) {
+    const day = new Date(from);
+    day.setDate(day.getDate() + i);
+    const key = day.toISOString().slice(0, 10);
+    days.push({ date: key, booked: byDay.get(key) ?? 0 });
+  }
+
+  sendSuccess(res, { days }, 'Availability retrieved.');
+});
+
+// -- GET /api/v1/profiles/me --------------------------------------------------──
 export const getMe = asyncHandler(async (req, res) => {
   const profile = await Profile.findOne({ userId: req.user.id }).populate(
     'userId',

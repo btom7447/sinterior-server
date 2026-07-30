@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { body } from 'express-validator';
 import {
   getMe,
+  getAvailability,
   getPublicProfile,
   updateMe,
   uploadAvatar,
@@ -28,6 +29,9 @@ router.get('/search', searchProfiles);
 // ── GET /api/v1/profiles/:profileId/public ────────────────────────────────────
 // After /me and /search, so neither word is ever read as an id.
 router.get('/:profileId/public', getPublicProfile);
+
+// ── GET /api/v1/profiles/:profileId/availability ─────────────────────────────
+router.get('/:profileId/availability', getAvailability);
 
 // ── PATCH /api/v1/profiles/me ─────────────────────────────────────────────────
 router.patch(
