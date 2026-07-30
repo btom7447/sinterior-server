@@ -95,7 +95,7 @@ export const getPublicProfile = asyncHandler(async (req, res) => {
       profile.role === 'artisan'
         ? ArtisanProfile.findOne({ profileId: profile._id })
             .select(
-              'skill skillCategory businessName businessTagline experienceYears isAvailable rating reviewCount city state'
+              'skill skillCategory businessName businessTagline experienceYears isAvailable rating reviewCount isVerified serviceRadiusKm city state'
             )
             .lean()
         : null,
@@ -142,6 +142,10 @@ export const getPublicProfile = asyncHandler(async (req, res) => {
               // artisan wrote about themselves, so the page should be able to show it.
               rating: artisan.rating ?? null,
               reviewCount: artisan.reviewCount ?? 0,
+              // Trust signals. On a marketplace where somebody is deciding whether to let
+              // a stranger into their house, these outrank anything else on the page.
+              isVerified: !!artisan.isVerified,
+              serviceRadiusKm: artisan.serviceRadiusKm ?? null,
             }
           : null,
 

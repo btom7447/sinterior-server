@@ -18,8 +18,19 @@ export const follow = asyncHandler(async (req, res) => {
   if (target._id.toString() === me._id.toString()) {
     throw new AppError('You cannot follow yourself.', 400);
   }
-  if (!['artisan', 'supplier'].includes(target.role)) {
-    throw new AppError('Only artisans and suppliers can be followed.', 400);
+  /**
+   * Anybody but staff.
+   *
+   * This used to be artisans and suppliers only, which made the follow button vanish on
+   * every client profile — and clients post pins and keep public boards like everybody
+   * else, so there was already something to follow. The rule was describing an older
+   * shape of the app.
+   *
+   * Staff stay unfollowable: a Sintherior account is not a person to keep up with, and a
+   * follower count on one would be a vanity number on an official channel.
+   */
+  if (target.role === 'admin') {
+    throw new AppError('Sintherior accounts cannot be followed.', 400);
   }
 
   try {
