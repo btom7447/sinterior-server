@@ -10,6 +10,7 @@ import { describeAttachments } from '../config/attachments.js';
 import { isProfileOnline } from '../socket.js';
 import ChatReport from '../models/ChatReport.js';
 import { destroyAttachments } from '../middleware/attachmentUpload.js';
+import escapeRegex from '../utils/escapeRegex.js';
 
 
 /**
@@ -297,6 +298,66 @@ const WITHDRAW_WINDOW_MS = 60 * 60 * 1000;
  * do is change a number, which the marker announces.
  */
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
+
+// ── GET /api/v1/chat/messages/:conversationId/search?q= ───────────────────────
+/**
+ * Find something somebody said in this thread.
+ *
+ * The useful answer is not just the matching messages but where they are, because
+ * the point of finding one is to read what surrounded it. So each hit carries its
+ * `position` — how many messages newer than it exist — which is exactly what the
+ * app needs to work out which page to load and where to scroll.
+ *
+ * Withdrawn and self-deleted messages are excluded: their content is gone, and a
+ * search that returns rows saying "this message was deleted" is answering a
+ * question nobody asked.
+ */
+export const searchMessages = asyncHandler(async (req, res) => {
+  const profile = await Profile.findOne({ userId: req.user.id }).select('_id');
+  if (!profile) throw new AppError('Profile not found.', 404);
+
+  const { conversationId } = req.params;
+  const q = String(req.query.q ?? '').trim();
+  if (q.length < 2) return sendSuccess(res, { results: [] }, 'Nothing to search for.');
+
+  const participantCheck = await Message.findOne({
+    conversationId,
+    $or: [{ senderId: profile._id }, { receiverId: profile._id }],
+  }).select('_id');
+  if (!participantCheck) throw new AppError('Conversation not found or access denied.', 404);
+
+  const pattern = new RegExp(escapeRegex(q), 'i');
+  const hits = await Message.find({
+    conversationId,
+    content: pattern,
+    deletedForEveryone: false,
+    hiddenFor: { $ne: profile._id },
+  })
+    .sort({ createdAt: -1 })
+    .limit(50)
+    .select('content createdAt senderId')
+    .lean();
+
+  /**
+   * How far down the thread each hit sits.
+   *
+   * Counted per hit rather than derived from a single query, because the thread's
+   * own ordering excludes what this person has hidden — so the only honest way to
+   * say "this is the 214th message from the newest" is to count them.
+   */
+  const results = await Promise.all(
+    hits.map(async (hit) => ({
+      ...hit,
+      position: await Message.countDocuments({
+        conversationId,
+        hiddenFor: { $ne: profile._id },
+        createdAt: { $gt: hit.createdAt },
+      }),
+    }))
+  );
+
+  sendSuccess(res, { results }, 'Search results.');
+});
 
 // ── PATCH /api/v1/chat/messages/:messageId ────────────────────────────────────
 /**

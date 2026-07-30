@@ -9,6 +9,7 @@ import {
   editMessage,
   forwardMessage,
   reportConversation,
+  searchMessages,
   searchUserByEmail,
   sendMessage,
 } from '../controllers/chat.controller.js';
@@ -103,6 +104,18 @@ router.post(
   ],
   validate,
   sendMessage
+);
+
+// ── GET /api/v1/chat/messages/:conversationId/search ─────────────────────────
+// Declared before /messages/:conversationId so "search" is never read as an id.
+router.get(
+  '/messages/:conversationId/search',
+  [
+    param('conversationId').notEmpty().isString(),
+    query('q').optional().isString().trim().isLength({ max: 200 }),
+  ],
+  validate,
+  searchMessages
 );
 
 // ── PATCH /api/v1/chat/messages/:messageId ────────────────────────────────────

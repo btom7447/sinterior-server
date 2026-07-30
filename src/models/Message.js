@@ -240,6 +240,18 @@ messageSchema.pre('validate', function (next) {
 });
 
 messageSchema.index({ conversationId: 1, createdAt: -1 });
+/**
+ * Searching inside one thread.
+ *
+ * Not a $text index. A text index is one per collection and would be global across
+ * every conversation in the database — which for chat is both the wrong scope and a
+ * disclosure risk, since a scoring engine that has seen every message is one query
+ * bug away from returning somebody else's. This is the ordinary compound index the
+ * scan needs: narrow by conversation first, then match content with a regex the
+ * caller escapes. A thread is thousands of documents, not millions, so a scan
+ * within one is cheap and stays correct.
+ */
+messageSchema.index({ conversationId: 1, content: 1 });
 messageSchema.index({ senderId: 1 });
 messageSchema.index({ receiverId: 1, isRead: 1 });
 // Finding what to mark delivered the moment a recipient reconnects.
