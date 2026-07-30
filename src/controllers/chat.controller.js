@@ -382,6 +382,184 @@ const WITHDRAW_WINDOW_MS = 60 * 60 * 1000;
  */
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
 
+// -- POST /api/v1/chat/messages/forward ---------------------------------------
+/**
+ * Forward several messages to one conversation.
+ *
+ * A list rather than one call each, for two reasons. The obvious one is round trips:
+ * five taps of a bulk action on a Nigerian connection should not be five visible
+ * pauses. The less obvious one is order — sending them in parallel means they arrive
+ * in whatever order the writes complete, so a quote and the photograph it refers to
+ * can land the wrong way round. These are written oldest first, in sequence.
+ */
+export const forwardMessages = asyncHandler(async (req, res) => {
+  const profile = await Profile.findOne({ userId: req.user.id }).select('_id fullName avatarUrl');
+  if (!profile) throw new AppError('Profile not found.', 404);
+
+  const ids = [...new Set((req.body.messageIds ?? []).map(String))].slice(0, 30);
+  if (!ids.length) throw new AppError('Nothing was selected.', 400);
+
+  const receiver = await Profile.findById(req.body.receiverId).select('_id fullName avatarUrl');
+  if (!receiver) throw new AppError('Recipient not found.', 404);
+  if (receiver._id.toString() === profile._id.toString()) {
+    throw new AppError('You cannot message yourself.', 400);
+  }
+
+  /**
+   * Only messages this person is actually part of.
+   *
+   * Without this any message id in the database becomes a message anybody can put in
+   * their own thread — which is a disclosure bug, not a validation nicety.
+   */
+  const sources = await Message.find({
+    _id: { $in: ids },
+    deletedForEveryone: false,
+    $or: [{ senderId: profile._id }, { receiverId: profile._id }],
+  })
+    .sort({ createdAt: 1 })
+    .lean();
+
+  if (!sources.length) throw new AppError('Those messages are no longer available.', 404);
+
+  const conversationId = buildConversationId(profile._id, receiver._id);
+  const online = isProfileOnline(receiver._id);
+  const io = req.app.get('io');
+
+  const sent = [];
+  for (const source of sources) {
+    // Sequential on purpose: createdAt is what orders a thread, and a parallel write
+    // would let two messages share a millisecond and arrive reversed.
+    const message = await Message.create({
+      conversationId,
+      senderId: profile._id,
+      receiverId: receiver._id,
+      content: source.content,
+      media: source.media,
+      // Referenced, not re-uploaded. The assets are already in Cloudinary; the delete
+      // path counts references before destroying anything.
+      attachments: source.attachments,
+      forwarded: true,
+      isRead: false,
+      status: online ? 'delivered' : 'sent',
+      deliveredAt: online ? new Date() : null,
+    });
+
+    const populated = await message.populate([
+      { path: 'senderId', select: 'fullName avatarUrl' },
+      { path: 'receiverId', select: 'fullName avatarUrl' },
+    ]);
+
+    if (io) {
+      const payload = populated.toJSON();
+      io.to(`profile:${receiver._id}`).emit('message:new', payload);
+      io.to(`profile:${profile._id}`).emit('message:new', payload);
+    }
+    sent.push(populated.toJSON());
+  }
+
+  sendSuccess(res, { forwarded: sent.length, messages: sent }, 'Forwarded.', 201);
+});
+
+// -- POST /api/v1/chat/messages/delete ----------------------------------------
+/**
+ * Remove several messages at once.
+ *
+ * Reports what it could not do rather than failing the whole request. A selection of
+ * six where one is too old to unsend should remove five and say so — refusing all six
+ * because of one would make somebody select them again minus the offender, which is
+ * both tedious and easy to get wrong.
+ */
+export const deleteMessages = asyncHandler(async (req, res) => {
+  const profile = await Profile.findOne({ userId: req.user.id }).select('_id');
+  if (!profile) throw new AppError('Profile not found.', 404);
+
+  const ids = [...new Set((req.body.messageIds ?? []).map(String))].slice(0, 30);
+  if (!ids.length) throw new AppError('Nothing was selected.', 400);
+
+  const everyone = req.body.scope === 'everyone';
+
+  const messages = await Message.find({
+    _id: { $in: ids },
+    $or: [{ senderId: profile._id }, { receiverId: profile._id }],
+  });
+  if (!messages.length) throw new AppError('Those messages are no longer available.', 404);
+
+  if (!everyone) {
+    // Hiding is always allowed and never partial, so it is one write.
+    await Message.updateMany(
+      { _id: { $in: messages.map((m) => m._id) } },
+      { $addToSet: { hiddenFor: profile._id } }
+    );
+    return sendSuccess(res, { removed: messages.length, refused: 0 }, 'Removed.');
+  }
+
+  const underReview = await ChatReport.exists({
+    conversationId: messages[0].conversationId,
+    status: { $in: ['open', 'reviewing'] },
+  });
+  if (underReview) {
+    throw new AppError(
+      'This conversation is being reviewed, so messages cannot be unsent right now.',
+      403
+    );
+  }
+
+  const io = req.app.get('io');
+  let removed = 0;
+  let refused = 0;
+
+  for (const message of messages) {
+    const mine = message.senderId.toString() === profile._id.toString();
+    const tooOld = Date.now() - new Date(message.createdAt).getTime() > WITHDRAW_WINDOW_MS;
+
+    if (!mine || tooOld || message.deletedForEveryone) {
+      refused += 1;
+      continue;
+    }
+
+    // Same reference count as the single delete: a forwarded copy points at the same
+    // Cloudinary asset, and destroying it here would blank a photograph in an
+    // unrelated thread.
+    const shared = message.attachments?.length
+      ? await Message.countDocuments({
+          _id: { $ne: message._id },
+          deletedForEveryone: false,
+          'attachments.publicId': {
+            $in: message.attachments.map((a) => a.publicId).filter(Boolean),
+          },
+        })
+      : 0;
+    if (!shared) await destroyAttachments(message.attachments);
+
+    message.content = '';
+    message.media = [];
+    message.attachments = [];
+    message.deletedForEveryone = true;
+    message.deletedAt = new Date();
+    message.deletedBy = profile._id;
+    await message.save();
+    removed += 1;
+
+    if (io) {
+      const payload = {
+        conversationId: message.conversationId,
+        messageId: message._id,
+        deletedBy: profile._id.toString(),
+      };
+      io.to(`profile:${message.senderId}`).emit('message:deleted', payload);
+      io.to(`profile:${message.receiverId}`).emit('message:deleted', payload);
+    }
+  }
+
+  sendSuccess(
+    res,
+    { removed, refused },
+    refused
+      ? `Unsent ${removed}. ${refused} could not be unsent — they are too old or not yours.`
+      : 'Unsent.'
+  );
+});
+
 // -- POST /api/v1/chat/conversations/actions ----------------------------------
 /**
  * Pin, unpin, mute, unmute or clear several conversations at once.

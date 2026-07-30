@@ -6,8 +6,10 @@ import {
   getConversations,
   getMessages,
   deleteMessage,
+  deleteMessages,
   editMessage,
   forwardMessage,
+  forwardMessages,
   reportConversation,
   searchMessages,
   searchUserByEmail,
@@ -121,6 +123,29 @@ router.post(
   ],
   validate,
   sendMessage
+);
+
+// -- POST /api/v1/chat/messages/forward ---------------------------------------
+// Both declared before /messages/:conversationId so neither word is read as an id.
+router.post(
+  '/messages/forward',
+  [
+    body('messageIds').isArray({ min: 1, max: 30 }),
+    body('receiverId').isMongoId().withMessage('Recipient not found.'),
+  ],
+  validate,
+  forwardMessages
+);
+
+// -- POST /api/v1/chat/messages/delete ----------------------------------------
+router.post(
+  '/messages/delete',
+  [
+    body('messageIds').isArray({ min: 1, max: 30 }),
+    body('scope').optional().isIn(['me', 'everyone']),
+  ],
+  validate,
+  deleteMessages
 );
 
 // ── GET /api/v1/chat/messages/:conversationId/search ─────────────────────────
