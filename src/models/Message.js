@@ -1,6 +1,44 @@
 import mongoose from 'mongoose';
 import { resolveImageUrls } from '../utils/resolveUrl.js';
 
+/**
+ * One attached file, with everything needed to draw it before it is fetched.
+ *
+ * media[] was a bare array of URLs, which is enough to show a photograph and
+ * nothing else. A document has to be introduced by name and size — nobody taps
+ * an unnamed 4MB download on mobile data — and a video needs a still to sit
+ * behind its play button. Guessing any of that from the URL is how you end up
+ * showing "1758912.pdf" where "Kitchen quote.pdf" belongs.
+ */
+const attachmentSchema = new mongoose.Schema(
+  {
+    url: { type: String, required: true },
+    /** Cloudinary's handle, so the asset can be deleted with the message. */
+    publicId: { type: String, default: null },
+    /** How Cloudinary stores it, which is needed to build a delete or a poster. */
+    resourceType: { type: String, enum: ['image', 'video', 'raw'], default: 'image' },
+
+    /** What the app draws: a photo tile, a video tile, or a document row. */
+    kind: { type: String, enum: ['image', 'video', 'file'], required: true },
+    mime: { type: String, default: null },
+
+    /** The name is most of what tells somebody whether to open the thing. */
+    name: { type: String, default: null, maxlength: 200 },
+    size: { type: Number, default: 0 },
+
+    /**
+     * Known dimensions let the grid reserve the right space before the bytes
+     * land, which is the difference between a thread that settles and one that
+     * jumps under the reader's thumb.
+     */
+    width: { type: Number, default: null },
+    height: { type: Number, default: null },
+    durationMs: { type: Number, default: null },
+    thumbnailUrl: { type: String, default: null },
+  },
+  { _id: false }
+);
+
 const messageSchema = new mongoose.Schema(
   {
     // conversationId is a deterministic string built from two sorted profile IDs
@@ -26,9 +64,19 @@ const messageSchema = new mongoose.Schema(
       maxlength: [2000, 'Message cannot exceed 2000 characters'],
       default: '',
     },
+    /**
+     * Kept as it was, holding image and video URLs only.
+     *
+     * The web client reads media[] directly and there is no reason to break it
+     * for a mobile feature. Both are written on send; attachments[] is the one
+     * that carries meaning, media[] is the compatible shadow of it.
+     */
     media: [{
       type: String, // relative URL to uploaded image
     }],
+
+    /** Every attachment, documents included, with its metadata. */
+    attachments: { type: [attachmentSchema], default: [] },
     isRead: {
       type: Boolean,
       default: false,
@@ -61,21 +109,37 @@ const messageSchema = new mongoose.Schema(
     toJSON: {
       transform(_doc, ret) {
         if (ret.media?.length) ret.media = resolveImageUrls(ret.media);
+        if (ret.attachments?.length) ret.attachments = resolveAttachments(ret.attachments);
         return ret;
       },
     },
     toObject: {
       transform(_doc, ret) {
         if (ret.media?.length) ret.media = resolveImageUrls(ret.media);
+        if (ret.attachments?.length) ret.attachments = resolveAttachments(ret.attachments);
         return ret;
       },
     },
   }
 );
 
-// At least content or media must be present
+/**
+ * Attachments are stored as absolute Cloudinary URLs today, but media[] holds
+ * relative paths from older messages, so both go through the resolver.
+ */
+function resolveAttachments(attachments) {
+  if (!Array.isArray(attachments)) return attachments;
+  return attachments.map((a) => {
+    const [url] = resolveImageUrls([a?.url]);
+    const [thumbnailUrl] = resolveImageUrls([a?.thumbnailUrl]);
+    return { ...a, url, thumbnailUrl };
+  });
+}
+
+// At least content or something attached must be present.
 messageSchema.pre('validate', function (next) {
-  if (!this.content?.trim() && (!this.media || this.media.length === 0)) {
+  const hasFiles = this.media?.length > 0 || this.attachments?.length > 0;
+  if (!this.content?.trim() && !hasFiles) {
     return next(new Error('Message must have content or media.'));
   }
   next();

@@ -6,6 +6,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import { resolveUploadUrl, resolveImageUrls } from '../utils/resolveUrl.js';
+import { describeAttachments } from '../config/attachments.js';
 
 
 /**
@@ -91,6 +92,15 @@ export const getConversations = asyncHandler(async (req, res) => {
           // only when that message is one of ours.
           status: '$lastMessage.status',
           hasMedia: { $gt: [{ $size: { $ifNull: ['$lastMessage.media', []] } }, 0] },
+          // Carried through so the row can name what was sent. A thread whose
+          // last message is a spreadsheet should not read as an empty line.
+          attachments: {
+            $map: {
+              input: { $ifNull: ['$lastMessage.attachments', []] },
+              as: 'a',
+              in: { kind: '$$a.kind' },
+            },
+          },
           senderId: '$lastMessage.senderId',
         },
         unreadCount: 1,
@@ -104,9 +114,17 @@ export const getConversations = asyncHandler(async (req, res) => {
   const enriched = conversations.map((conv) => {
     const senderIsMe = conv.senderProfile?._id?.toString() === myId;
     const otherProfile = senderIsMe ? conv.receiverProfile : conv.senderProfile;
+    const last = conv.lastMessage;
     return {
       conversationId: conv.conversationId,
-      lastMessage: conv.lastMessage,
+      lastMessage: last
+        ? {
+            ...last,
+            // Named on the server so every client says the same thing, and so a
+            // list row never comes back blank because the message was a file.
+            preview: last.content?.trim() || describeAttachments(last.attachments),
+          }
+        : last,
       unreadCount: conv.unreadCount,
       participant: otherProfile
         ? {
@@ -209,11 +227,15 @@ export const sendMessage = asyncHandler(async (req, res) => {
     throw new AppError('receiverId is required.', 400);
   }
 
-  // Get media from uploaded files (if any)
-  const media = req.files?.map((f) => f.url) || [];
+  // Uploaded by attachmentUpload, which has already checked type and size.
+  const attachments = req.attachments ?? [];
 
-  if ((!content || !content.trim()) && media.length === 0) {
-    throw new AppError('Message must have content or media.', 400);
+  // media[] is the compatible shadow: URLs only, and only of things the web
+  // client knows how to draw. A document in there would render as a broken img.
+  const media = attachments.filter((a) => a.kind !== 'file').map((a) => a.url);
+
+  if ((!content || !content.trim()) && attachments.length === 0) {
+    throw new AppError('Message must have content or an attachment.', 400);
   }
 
   if (receiverId.toString() === senderProfile._id.toString()) {
@@ -234,6 +256,7 @@ export const sendMessage = asyncHandler(async (req, res) => {
     receiverId: receiverProfile._id,
     content: content?.trim() || '',
     media: media.length > 0 ? media : undefined,
+    attachments,
     isRead: false,
   });
 
@@ -262,6 +285,9 @@ export const sendMessage = asyncHandler(async (req, res) => {
       },
       content: message.content,
       media: resolvedMedia.length > 0 ? resolvedMedia : undefined,
+      // Sent whole so the recipient can draw the bubble from the socket payload
+      // alone, without a round trip to find out what arrived.
+      attachments: message.toJSON().attachments,
       isRead: false,
       status: message.status,
       createdAt: message.createdAt,
@@ -273,7 +299,7 @@ export const sendMessage = asyncHandler(async (req, res) => {
     io.to(`profile:${receiverProfile._id}`).emit('conversation:updated', {
       conversationId,
       lastMessage: {
-        content: message.content || (resolvedMedia.length > 0 ? 'Sent an image' : ''),
+        content: message.content || describeAttachments(attachments),
         createdAt: message.createdAt,
         senderId: senderProfile._id,
       },

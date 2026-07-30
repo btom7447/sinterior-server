@@ -3,7 +3,7 @@ import { body, param, query } from 'express-validator';
 import { getConversationMeta,
   getConversations, getMessages, sendMessage, searchUserByEmail } from '../controllers/chat.controller.js';
 import { protect } from '../middleware/auth.js';
-import { uploadMultiple, resizeImage } from '../middleware/upload.js';
+import { parseAttachments, uploadAttachments } from '../middleware/attachmentUpload.js';
 import validate from '../middleware/validate.js';
 
 const router = Router();
@@ -37,11 +37,14 @@ router.get(
 );
 
 // ── POST /api/v1/chat/messages ────────────────────────────────────────────────
-// Supports text-only (JSON) and text+images (multipart/form-data)
+// Text only as JSON, or text plus attachments as multipart/form-data. Photos,
+// video and documents all arrive on the same `media` field; the middleware sorts
+// them by type, because asking the client to pick the right field name is asking
+// it to duplicate a rule the server already owns.
 router.post(
   '/messages',
-  uploadMultiple('media', 4),
-  resizeImage(1200, 0, 80),
+  parseAttachments('media'),
+  uploadAttachments,
   [
     body('receiverId')
       .notEmpty()
