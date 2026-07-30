@@ -377,6 +377,19 @@ export const sendMessage = asyncHandler(async (req, res) => {
 
   const conversationId = buildConversationId(senderProfile._id, receiverProfile._id);
 
+  /**
+   * Born delivered when the recipient is connected.
+   *
+   * The socket send path already did this; the REST path did not — and the REST
+   * path is the one the app actually uses, for every message with an attachment
+   * and every message without. So `delivered` was unreachable from the app:
+   * everything sat on one tick until the recipient opened the thread, at which
+   * point it jumped straight to read. The two-grey-tick state — "on their phone,
+   * not yet opened" — is the one a sender waiting on a quote cares about most,
+   * and it never appeared.
+   */
+  const online = isProfileOnline(receiverProfile._id);
+
   const message = await Message.create({
     conversationId,
     senderId: senderProfile._id,
@@ -385,6 +398,8 @@ export const sendMessage = asyncHandler(async (req, res) => {
     media: media.length > 0 ? media : undefined,
     attachments,
     isRead: false,
+    status: online ? 'delivered' : 'sent',
+    deliveredAt: online ? new Date() : null,
   });
 
   const populated = await message.populate([
