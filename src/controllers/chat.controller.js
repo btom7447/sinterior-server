@@ -288,6 +288,76 @@ export const reportConversation = asyncHandler(async (req, res) => {
  */
 const WITHDRAW_WINDOW_MS = 60 * 60 * 1000;
 
+/**
+ * How long a sender has to fix what they wrote.
+ *
+ * Fifteen minutes, matching what people already know from WhatsApp, and longer than
+ * the hour-less unsend window is short — because an edit leaves the message and its
+ * marker in place, so it cannot be used to make a promise vanish. The worst it can
+ * do is change a number, which the marker announces.
+ */
+const EDIT_WINDOW_MS = 15 * 60 * 1000;
+
+// ── PATCH /api/v1/chat/messages/:messageId ────────────────────────────────────
+/**
+ * Change what a message says.
+ *
+ * Text only, and only your own. Editing somebody else's words is not a feature, and
+ * editing an attachment is not an edit — it is a different message, which forwarding
+ * and sending already cover.
+ */
+export const editMessage = asyncHandler(async (req, res) => {
+  const profile = await Profile.findOne({ userId: req.user.id }).select('_id');
+  if (!profile) throw new AppError('Profile not found.', 404);
+
+  const message = await Message.findById(req.params.messageId);
+  if (!message) throw new AppError('Message not found.', 404);
+
+  if (message.senderId.toString() !== profile._id.toString()) {
+    throw new AppError('You can only edit your own messages.', 403);
+  }
+  if (message.deletedForEveryone) throw new AppError('That message was deleted.', 400);
+
+  const age = Date.now() - new Date(message.createdAt).getTime();
+  if (age > EDIT_WINDOW_MS) {
+    throw new AppError('This message is too old to edit.', 403);
+  }
+
+  // Same rule as unsending: a report exists because somebody disputes what was
+  // said, and rewriting it while staff are reading would defeat the report.
+  const underReview = await ChatReport.exists({
+    conversationId: message.conversationId,
+    status: { $in: ['open', 'reviewing'] },
+  });
+  if (underReview) {
+    throw new AppError(
+      'This conversation is being reviewed, so messages cannot be edited right now.',
+      403
+    );
+  }
+
+  const content = String(req.body.content ?? '').trim();
+  if (!content) throw new AppError('An edited message still needs some words.', 400);
+
+  message.content = content.slice(0, 2000);
+  message.editedAt = new Date();
+  await message.save();
+
+  const io = req.app.get('io');
+  if (io) {
+    const payload = {
+      conversationId: message.conversationId,
+      messageId: message._id,
+      content: message.content,
+      editedAt: message.editedAt,
+    };
+    io.to(`profile:${message.senderId}`).emit('message:edited', payload);
+    io.to(`profile:${message.receiverId}`).emit('message:edited', payload);
+  }
+
+  sendSuccess(res, { message: message.toJSON() }, 'Message updated.');
+});
+
 // ── POST /api/v1/chat/messages/:messageId/forward ─────────────────────────────
 /**
  * Pass a message on to another conversation.

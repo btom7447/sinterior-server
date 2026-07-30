@@ -145,6 +145,21 @@ const messageSchema = new mongoose.Schema(
      * thread it came from.
      */
     forwarded: { type: Boolean, default: false },
+
+    /**
+     * When it was last edited, if it was.
+     *
+     * A timestamp rather than a flag, so the marker can say when — and so an audit
+     * can tell an edit made ten seconds after sending from one made fourteen
+     * minutes later, which are different kinds of act.
+     *
+     * The previous text is deliberately not kept. An edit history would be the
+     * safest thing for a dispute and the worst thing for the person who fixed a
+     * typo: it turns every correction into a permanent record of the mistake. The
+     * window is short enough that the honest use is nearly always a typo, and the
+     * dishonest use is closed by the window rather than by surveillance.
+     */
+    editedAt: { type: Date, default: null },
     isRead: {
       type: Boolean,
       default: false,

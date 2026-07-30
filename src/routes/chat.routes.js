@@ -6,6 +6,7 @@ import {
   getConversations,
   getMessages,
   deleteMessage,
+  editMessage,
   forwardMessage,
   reportConversation,
   searchUserByEmail,
@@ -102,6 +103,21 @@ router.post(
   ],
   validate,
   sendMessage
+);
+
+// ── PATCH /api/v1/chat/messages/:messageId ────────────────────────────────────
+router.patch(
+  '/messages/:messageId',
+  [
+    param('messageId').isMongoId().withMessage('Message not found.'),
+    body('content')
+      .isString()
+      .trim()
+      .isLength({ min: 1, max: 2000 })
+      .withMessage('An edited message still needs some words.'),
+  ],
+  validate,
+  editMessage
 );
 
 // ── POST /api/v1/chat/messages/:messageId/forward ─────────────────────────────
