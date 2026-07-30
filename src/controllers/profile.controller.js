@@ -8,6 +8,9 @@ import { sendSuccess } from '../utils/apiResponse.js';
 import { resolveUploadUrl } from '../utils/resolveUrl.js';
 import escapeRegex from '../utils/escapeRegex.js';
 import Pin from '../models/Pin.js';
+import ArtisanProfile from '../models/ArtisanProfile.js';
+import SupplierProfile from '../models/SupplierProfile.js';
+import Product from '../models/Product.js';
 import Follow from '../models/Follow.js';
 import { isProfileOnline } from '../socket.js';
 
@@ -69,11 +72,40 @@ export const getPublicProfile = asyncHandler(async (req, res) => {
     .lean();
   if (!profile) throw new AppError('Profile not found.', 404);
 
-  const [pins, followers] = await Promise.all([
-    // Only published work. A draft is not a portfolio.
-    Pin.countDocuments({ author: profile._id, status: 'active' }),
-    Follow.countDocuments({ followed: profile._id }),
-  ]);
+  const me = await Profile.findOne({ userId: req.user?.id }).select('_id').lean();
+
+  /**
+   * Everything the page can show, gathered at once.
+   *
+   * The counts are what the screen was missing: a profile with no posts and no follower
+   * count is a portrait and a name, which is why a client's page looked broken next to
+   * an artisan's. Zeroes are returned rather than omitted — the screen decides what a
+   * zero should look like, and that is not a decision the server should make for it.
+   */
+  const [pins, followers, following, iFollow, artisan, supplier, products] =
+    await Promise.all([
+      // Only published work. A draft is not a portfolio.
+      Pin.countDocuments({ author: profile._id, status: 'active' }),
+      Follow.countDocuments({ followed: profile._id }),
+      Follow.countDocuments({ follower: profile._id }),
+      me ? Follow.exists({ follower: me._id, followed: profile._id }) : null,
+
+      // Role-specific, and null for anybody it does not apply to rather than an empty
+      // object — the client tests for presence to decide whether a section exists.
+      profile.role === 'artisan'
+        ? ArtisanProfile.findOne({ profileId: profile._id })
+            .select('skill skillCategory businessName businessTagline experienceYears isAvailable city state')
+            .lean()
+        : null,
+      profile.role === 'supplier'
+        ? SupplierProfile.findOne({ profileId: profile._id })
+            .select('businessName businessType description logoUrl isVerified categories deliveryDays')
+            .lean()
+        : null,
+      profile.role === 'supplier'
+        ? Product.countDocuments({ supplierId: profile._id })
+        : 0,
+    ]);
 
   sendSuccess(
     res,
@@ -89,7 +121,35 @@ export const getPublicProfile = asyncHandler(async (req, res) => {
         state: profile.state ?? null,
         bio: profile.bio ?? '',
         joinedAt: profile.createdAt,
-        counts: { pins, followers },
+        counts: { pins, followers, following, products },
+
+        /** Whether the caller already follows them, so the button knows its own state. */
+        isFollowing: !!iFollow,
+        /** True for your own profile, so the page can drop every action at once. */
+        isMe: !!me && me._id.toString() === profile._id.toString(),
+
+        artisan: artisan
+          ? {
+              skill: artisan.skill ?? null,
+              skillCategory: artisan.skillCategory ?? null,
+              businessName: artisan.businessName ?? null,
+              businessTagline: artisan.businessTagline ?? null,
+              experienceYears: artisan.experienceYears ?? null,
+              isAvailable: artisan.isAvailable ?? null,
+            }
+          : null,
+
+        supplier: supplier
+          ? {
+              businessName: supplier.businessName ?? null,
+              businessType: supplier.businessType ?? null,
+              description: supplier.description ?? null,
+              logoUrl: resolveUploadUrl(supplier.logoUrl),
+              isVerified: !!supplier.isVerified,
+              categories: supplier.categories ?? [],
+              deliveryDays: supplier.deliveryDays ?? null,
+            }
+          : null,
       },
     },
     'Profile retrieved.'
