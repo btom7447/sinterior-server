@@ -11,6 +11,7 @@ import { isProfileOnline } from '../socket.js';
 import ChatReport from '../models/ChatReport.js';
 import ConversationState from '../models/ConversationState.js';
 import { destroyAttachments } from '../middleware/attachmentUpload.js';
+import { pushMessage } from '../services/messagePush.service.js';
 import escapeRegex from '../utils/escapeRegex.js';
 
 
@@ -1245,6 +1246,18 @@ export const sendMessage = asyncHandler(async (req, res) => {
       },
     });
   }
+
+  /**
+   * And a push, if their app is closed and they have not muted this thread.
+   *
+   * Deliberately not awaited: the sender is waiting on this response, and whether
+   * somebody else's phone buzzed is not something they should wait for.
+   */
+  pushMessage({
+    message,
+    senderName: senderProfile.fullName,
+    receiverProfileId: receiverProfile._id,
+  }).catch(() => {});
 
   sendSuccess(res, { message: populated }, 'Message sent.', 201);
 });
