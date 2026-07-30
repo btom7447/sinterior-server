@@ -89,13 +89,15 @@ export const MAX_ANY_BYTES = Math.max(...Object.values(MAX_BYTES));
 /**
  * How many files may ride on one message.
  *
- * Five, not ten. Ten filled the composer tray past what fits on screen, and the
- * bubble only draws four tiles before it starts counting the rest — so the
- * upload somebody paid for on metered data arrived as "+6" they had to tap
- * through. Five is a set of site photographs, which is what people actually
- * send, and anything larger reads better as two messages anyway.
+ * Ten. The bubble draws four tiles and counts the remainder, which is what WhatsApp
+ * does, and tapping any tile opens the viewer on the whole set — so nothing sent is
+ * unreachable. Five had been tuned around the grid rather than around what people
+ * actually send, and a set of site photographs is routinely more than five.
+ *
+ * The per-kind size limits are what keep this from being abused; the count is only
+ * about how much fits in one bubble.
  */
-export const MAX_PER_MESSAGE = 5;
+export const MAX_PER_MESSAGE = 10;
 
 /** Every mime type the server will take, for the client to check against first. */
 export const ALLOWED_MIMES = Object.keys(TYPES);
