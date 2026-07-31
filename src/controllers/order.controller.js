@@ -235,7 +235,11 @@ export const list = asyncHandler(async (req, res) => {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate('buyerId', 'fullName avatarUrl city'),
+      // The item carries a name snapshot but not a picture, and a list of
+      // orders that is only text is unreadable at a glance. Images only —
+      // the name and price must stay the snapshot taken at order time.
+      .populate('buyerId', 'fullName avatarUrl city')
+      .populate('items.productId', 'images'),
   ]);
 
   const pagination = buildPaginationMeta(total, page, limit);
@@ -249,10 +253,11 @@ export const getById = asyncHandler(async (req, res) => {
     throw new AppError('Profile not found.', 404);
   }
 
-  const order = await Order.findById(req.params.id).populate(
-    'buyerId',
-    'fullName avatarUrl phone city'
-  );
+  const order = await Order.findById(req.params.id)
+    .populate('buyerId', 'fullName avatarUrl phone city')
+    // Images only. Name and price stay as they were when the order was placed —
+    // repricing an order from the live product would rewrite history.
+    .populate('items.productId', 'images');
 
   if (!order) {
     throw new AppError('Order not found.', 404);
