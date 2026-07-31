@@ -100,14 +100,34 @@ async function postBatch(batch) {
 async function reconcile(batch, tickets) {
   let sent = 0;
   const dead = [];
+  const refused = new Map();
 
   tickets.forEach((ticket, at) => {
     if (ticket?.status === 'ok') {
       sent += 1;
       return;
     }
-    if (ticket?.details?.error === 'DeviceNotRegistered') dead.push(batch[at].to);
+
+    const reason = ticket?.details?.error ?? ticket?.message ?? 'unknown';
+    if (reason === 'DeviceNotRegistered') {
+      dead.push(batch[at].to);
+      return;
+    }
+
+    // Everything else was counted as "not sent" and then thrown away, which is
+    // how a whole platform can be silently undeliverable. A missing FCM
+    // credential comes back here as MismatchSenderId or InvalidCredentials on
+    // every single push, and nothing anywhere said so — the tokens looked
+    // registered, the send looked like it ran, and no notification arrived.
+    //
+    // Grouped rather than logged per token: one misconfigured project means one
+    // line per batch, not one per phone.
+    refused.set(reason, (refused.get(reason) ?? 0) + 1);
   });
+
+  for (const [reason, count] of refused) {
+    console.warn(`[push] ${count} refused: ${reason}`);
+  }
 
   if (dead.length) {
     await PushToken.deleteMany({ token: { $in: dead } }).catch(() => {});
