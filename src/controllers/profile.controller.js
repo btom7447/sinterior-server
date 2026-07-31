@@ -236,6 +236,11 @@ export const getPublicProfile = asyncHandler(async (req, res) => {
               businessType: supplier.businessType ?? null,
               description: supplier.description ?? null,
               logoUrl: resolveUploadUrl(supplier.logoUrl),
+              // Reviews recompute this on both profile kinds, but only the
+              // artisan block passed it on — so a supplier's earned rating was
+              // being stored and then dropped on the way out.
+              rating: supplier.rating ?? null,
+              reviewCount: supplier.reviewCount ?? 0,
               isVerified: !!supplier.isVerified,
               categories: supplier.categories ?? [],
               deliveryDays: supplier.deliveryDays ?? null,

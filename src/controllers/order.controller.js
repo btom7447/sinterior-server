@@ -9,6 +9,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import { emitNotification } from '../utils/emitNotification.js';
+import { isSameRef, refId } from '../utils/refId.js';
 import { sendEmailSafe } from '../utils/sendEmail.js';
 import { releaseEscrow, accrueCodFee } from '../services/wallet.service.js';
 import PlatformSetting from '../models/PlatformSetting.js';
@@ -257,15 +258,19 @@ export const getById = asyncHandler(async (req, res) => {
     .populate('buyerId', 'fullName avatarUrl phone city')
     // Images only. Name and price stay as they were when the order was placed —
     // repricing an order from the live product would rewrite history.
-    .populate('items.productId', 'images');
+    .populate('items.productId', 'images')
+    // Who is actually sending it. An order can span several suppliers, so the
+    // buyer needs them named — to know who to chase, and to review afterwards.
+    .populate('items.supplierId', 'fullName avatarUrl');
 
   if (!order) {
     throw new AppError('Order not found.', 404);
   }
 
-  // Buyer or supplier (whose product is in the order) may view
-  const isBuyer = order.buyerId._id.toString() === profile._id.toString();
-  const isSupplier = order.items.some((item) => item.supplierId.toString() === profile._id.toString());
+  // Buyer or supplier (whose product is in the order) may view. Both refs are
+  // populated above, so both are read through isSameRef.
+  const isBuyer = isSameRef(order.buyerId, profile._id);
+  const isSupplier = order.items.some((item) => isSameRef(item.supplierId, profile._id));
 
   if (!isBuyer && !isSupplier) {
     throw new AppError('You are not authorised to view this order.', 403);
@@ -293,8 +298,8 @@ export const updateStatus = asyncHandler(async (req, res) => {
   }
 
   // Authorization: buyer can cancel; supplier can confirm/ship/deliver
-  const isBuyer = order.buyerId._id.toString() === profile._id.toString();
-  const isSupplier = order.items.some((item) => item.supplierId.toString() === profile._id.toString());
+  const isBuyer = isSameRef(order.buyerId, profile._id);
+  const isSupplier = order.items.some((item) => isSameRef(item.supplierId, profile._id));
 
   if (!isBuyer && !isSupplier) {
     throw new AppError('You are not authorised to update this order.', 403);
@@ -394,10 +399,8 @@ export const approveDelivery = asyncHandler(async (req, res) => {
   const order = await Order.findById(req.params.id).populate('buyerId', 'userId fullName');
   if (!order) throw new AppError('Order not found.', 404);
 
-  const isBuyer = order.buyerId._id.toString() === profile._id.toString();
-  const isSupplier = order.items.some(
-    (item) => item.supplierId.toString() === profile._id.toString()
-  );
+  const isBuyer = isSameRef(order.buyerId, profile._id);
+  const isSupplier = order.items.some((item) => isSameRef(item.supplierId, profile._id));
   if (!isBuyer && !isSupplier) {
     throw new AppError('You are not authorised to update this order.', 403);
   }
@@ -482,7 +485,7 @@ export const approveDelivery = asyncHandler(async (req, res) => {
       // Accrue platform fee per supplier so we can collect later.
       const supplierTotals = new Map();
       for (const item of order.items) {
-        const sid = item.supplierId.toString();
+        const sid = refId(item.supplierId);
         const lineKobo = Math.round(item.priceAtOrder * item.quantity * 100);
         supplierTotals.set(sid, (supplierTotals.get(sid) || 0) + lineKobo);
       }

@@ -1,6 +1,7 @@
 import Product from '../models/Product.js';
 import Profile from '../models/Profile.js';
 import SavedProduct from '../models/SavedProduct.js';
+import SupplierProfile from '../models/SupplierProfile.js';
 import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
@@ -104,7 +105,43 @@ export const getById = asyncHandler(async (req, res) => {
   }
 
   const [shaped] = await withSavedFlag(req, [product]);
-  sendSuccess(res, { product: shaped }, 'Product retrieved.');
+
+  /*
+   * The seller's standing, attached here rather than fetched separately.
+   *
+   * A product carries rating fields of its own, but nothing writes them —
+   * reviews are of the seller, not the item. Somebody deciding whether to send
+   * money to a stranger for a lorry of cement is judging the seller anyway, so
+   * that is the number worth showing, and it is one query rather than a second
+   * round trip from the phone.
+   *
+   * Only on the detail route. A grid of cards all showing the same seller's
+   * rating would be repeating one fact twenty times.
+   */
+  const sellerProfileId = product.supplierId?._id ?? product.supplierId;
+  const seller = sellerProfileId
+    ? await SupplierProfile.findOne({ profileId: sellerProfileId })
+        .select('rating reviewCount isVerified businessName')
+        .lean()
+    : null;
+
+  sendSuccess(
+    res,
+    {
+      product: {
+        ...shaped,
+        seller: seller
+          ? {
+              rating: seller.rating ?? null,
+              reviewCount: seller.reviewCount ?? 0,
+              isVerified: !!seller.isVerified,
+              businessName: seller.businessName ?? null,
+            }
+          : null,
+      },
+    },
+    'Product retrieved.'
+  );
 });
 
 // ── POST /api/v1/products ─────────────────────────────────────────────────────
