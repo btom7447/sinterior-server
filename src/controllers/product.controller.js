@@ -194,7 +194,7 @@ export const checkStock = asyncHandler(async (req, res) => {
 
   const productIds = items.map((i) => i.productId);
   const products = await Product.find({ _id: { $in: productIds }, isActive: true }).select(
-    '_id name quantity inStock'
+    '_id name quantity inStock price unit'
   );
   const productMap = new Map(products.map((p) => [p._id.toString(), p]));
 
@@ -203,8 +203,26 @@ export const checkStock = asyncHandler(async (req, res) => {
     if (!product) {
       return { productId: item.productId, available: false, reason: 'Product not found or inactive' };
     }
+
+    /**
+     * The price as it stands, alongside availability.
+     *
+     * A cart holds whatever a product cost when it was added, which on a
+     * marketplace of building materials can be weeks ago — and the order
+     * endpoint re-prices from the database. Without this the shopper reads
+     * ₦9,500, taps pay, and is charged ₦10,200 with no warning. Returning it
+     * here lets the cart say so before the money moves.
+     */
+    const pricing = { name: product.name, price: product.price, unit: product.unit };
+
     if (!product.inStock || product.quantity === 0) {
-      return { productId: item.productId, available: false, availableQuantity: 0, reason: 'Out of stock' };
+      return {
+        productId: item.productId,
+        available: false,
+        availableQuantity: 0,
+        reason: 'Out of stock',
+        ...pricing,
+      };
     }
     if (product.quantity < item.quantity) {
       return {
@@ -212,9 +230,15 @@ export const checkStock = asyncHandler(async (req, res) => {
         available: false,
         availableQuantity: product.quantity,
         reason: `Only ${product.quantity} available`,
+        ...pricing,
       };
     }
-    return { productId: item.productId, available: true, availableQuantity: product.quantity };
+    return {
+      productId: item.productId,
+      available: true,
+      availableQuantity: product.quantity,
+      ...pricing,
+    };
   });
 
   sendSuccess(res, { results }, 'Stock checked.');
