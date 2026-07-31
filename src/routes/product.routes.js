@@ -1,7 +1,17 @@
 import { Router } from 'express';
 import { body, param, query } from 'express-validator';
-import { list, getById, create, update, remove, uploadImages, checkStock } from '../controllers/product.controller.js';
-import { protect, restrictTo } from '../middleware/auth.js';
+import {
+  list,
+  getById,
+  create,
+  update,
+  remove,
+  uploadImages,
+  checkStock,
+  listSaved,
+  toggleSaved,
+} from '../controllers/product.controller.js';
+import { protect, optionalAuth, restrictTo } from '../middleware/auth.js';
 import { uploadMultiple, resizeImage } from '../middleware/upload.js';
 import validate from '../middleware/validate.js';
 
@@ -10,6 +20,7 @@ const router = Router();
 // ── GET /api/v1/products ──────────────────────────────────────────────────────
 router.get(
   '/',
+  optionalAuth,
   [
     query('page').optional().isInt({ min: 1 }).withMessage('page must be a positive integer'),
     query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
@@ -43,9 +54,18 @@ router.post(
   checkStock
 );
 
+// ── GET /api/v1/products/saved ────────────────────────────────────────────────
+// Before /:id, which would otherwise read "saved" as a product id.
+router.get('/saved', protect, listSaved);
+
+// ── POST/DELETE /api/v1/products/:id/save ────────────────────────────────────
+router.post('/:id/save', protect, toggleSaved);
+router.delete('/:id/save', protect, toggleSaved);
+
 // ── GET /api/v1/products/:id ──────────────────────────────────────────────────
 router.get(
   '/:id',
+  optionalAuth,
   [param('id').isMongoId().withMessage('Invalid product ID')],
   validate,
   getById

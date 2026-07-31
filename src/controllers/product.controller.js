@@ -1,5 +1,6 @@
 import Product from '../models/Product.js';
 import Profile from '../models/Profile.js';
+import SavedProduct from '../models/SavedProduct.js';
 import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
@@ -60,8 +61,36 @@ export const list = asyncHandler(async (req, res) => {
   ]);
 
   const pagination = buildPaginationMeta(total, page, limit);
-  sendPaginated(res, products, pagination, 'Products retrieved.');
+  sendPaginated(res, await withSavedFlag(req, products), pagination, 'Products retrieved.');
 });
+
+/**
+ * Mark which of these the viewer has saved.
+ *
+ * One query for the whole page rather than one per product, and only when a
+ * token was sent — a signed-out shopper gets false rather than somebody else's
+ * list. Without this a card cannot draw a filled heart and the save silently
+ * un-renders itself on the next scroll.
+ */
+async function withSavedFlag(req, products) {
+  const list = products.map((p) => (typeof p.toJSON === 'function' ? p.toJSON() : p));
+  if (!req.user?.id || !list.length) {
+    return list.map((p) => ({ ...p, savedByMe: false }));
+  }
+
+  const profile = await Profile.findOne({ userId: req.user.id }).select('_id').lean();
+  if (!profile) return list.map((p) => ({ ...p, savedByMe: false }));
+
+  const saved = await SavedProduct.find({
+    owner: profile._id,
+    productId: { $in: list.map((p) => p._id) },
+  })
+    .select('productId')
+    .lean();
+
+  const mine = new Set(saved.map((s) => String(s.productId)));
+  return list.map((p) => ({ ...p, savedByMe: mine.has(String(p._id)) }));
+}
 
 // ── GET /api/v1/products/:id ──────────────────────────────────────────────────
 export const getById = asyncHandler(async (req, res) => {
@@ -74,7 +103,8 @@ export const getById = asyncHandler(async (req, res) => {
     throw new AppError('Product not found.', 404);
   }
 
-  sendSuccess(res, { product }, 'Product retrieved.');
+  const [shaped] = await withSavedFlag(req, [product]);
+  sendSuccess(res, { product: shaped }, 'Product retrieved.');
 });
 
 // ── POST /api/v1/products ─────────────────────────────────────────────────────
@@ -211,3 +241,63 @@ export const remove = asyncHandler(async (req, res) => {
 
   sendSuccess(res, null, 'Product deleted.');
 });
+
+// ── GET /api/v1/products/saved ────────────────────────────────────────────────
+// The shopping list. Products that have since been withdrawn are dropped rather
+// than shown as dead rows — a saved item you cannot buy is worse than one that
+// quietly went away, because it invites a tap that can only disappoint.
+export const listSaved = asyncHandler(async (req, res) => {
+  const profile = await myProfile(req.user.id);
+  const { page, limit, skip } = getPagination(req.query);
+
+  const [total, rows] = await Promise.all([
+    SavedProduct.countDocuments({ owner: profile._id }),
+    SavedProduct.find({ owner: profile._id })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate({
+        path: 'productId',
+        match: { isActive: true },
+        populate: { path: 'supplierId', select: 'fullName avatarUrl city state' },
+      })
+      .lean(),
+  ]);
+
+  const products = rows
+    .map((r) => r.productId)
+    .filter(Boolean)
+    .map((p) => ({ ...p, savedByMe: true }));
+
+  sendPaginated(res, products, buildPaginationMeta(total, page, limit), 'Saved products retrieved.');
+});
+
+// ── POST/DELETE /api/v1/products/:id/save ─────────────────────────────────────
+// Idempotent both ways: the unique index absorbs a double tap, and unsaving
+// something that was never saved is the state the caller asked for.
+export const toggleSaved = asyncHandler(async (req, res) => {
+  const profile = await myProfile(req.user.id);
+  const saving = req.method === 'POST';
+
+  if (saving) {
+    const product = await Product.findById(req.params.id).select('_id isActive');
+    if (!product || !product.isActive) throw new AppError('Product not found.', 404);
+
+    await SavedProduct.updateOne(
+      { owner: profile._id, productId: product._id },
+      { $setOnInsert: { owner: profile._id, productId: product._id } },
+      { upsert: true }
+    );
+  } else {
+    await SavedProduct.deleteOne({ owner: profile._id, productId: req.params.id });
+  }
+
+  sendSuccess(res, { savedByMe: saving }, saving ? 'Saved.' : 'Removed from saved.');
+});
+
+/** The viewer's profile, or a 404 — every route here is behind protect. */
+async function myProfile(userId) {
+  const profile = await Profile.findOne({ userId }).select('_id').lean();
+  if (!profile) throw new AppError('Profile not found.', 404);
+  return profile;
+}
