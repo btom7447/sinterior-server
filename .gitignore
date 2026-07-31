@@ -6,3 +6,7 @@ uploads/*
 *.log
 dist/
 .DS_Store
+
+# Throwaway diagnostic scripts. They carry real tokens and ids and are written
+# to be run once against a live service, never kept.
+_*.mjs
