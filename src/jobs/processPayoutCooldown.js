@@ -4,7 +4,6 @@
 // the funds back.
 
 import PayoutRequest from '../models/PayoutRequest.js';
-import BankAccount from '../models/BankAccount.js';
 import Wallet from '../models/Wallet.js';
 import { initiateTransfer } from '../utils/paystack.js';
 import PlatformSetting from '../models/PlatformSetting.js';

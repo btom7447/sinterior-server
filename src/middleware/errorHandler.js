@@ -84,7 +84,7 @@ const sendProdError = (err, res) => {
  * Express global error handler (must have 4 parameters).
  * Register this LAST in app.js after all routes.
  */
-// eslint-disable-next-line no-unused-vars
+ 
 const errorHandler = (err, req, res, next) => {
   err.statusCode = err.statusCode || 500;
   err.status = err.status || 'error';

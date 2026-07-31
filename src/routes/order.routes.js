@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { body, param } from 'express-validator';
 import { create, list, getById, updateStatus, approveDelivery } from '../controllers/order.controller.js';
-import { protect, restrictTo } from '../middleware/auth.js';
+import { protect } from '../middleware/auth.js';
 import validate from '../middleware/validate.js';
 
 const router = Router();

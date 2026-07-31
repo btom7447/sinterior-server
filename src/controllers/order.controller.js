@@ -12,7 +12,6 @@ import { emitNotification } from '../utils/emitNotification.js';
 import { sendEmailSafe } from '../utils/sendEmail.js';
 import { releaseEscrow, accrueCodFee } from '../services/wallet.service.js';
 import PlatformSetting from '../models/PlatformSetting.js';
-import Wallet from '../models/Wallet.js';
 import {
   orderPlacedClient,
   orderPlacedSupplier,

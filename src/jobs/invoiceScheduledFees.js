@@ -21,7 +21,6 @@ export const runInvoiceScheduledFees = async () => {
   let invoiced = 0;
   for (const wallet of wallets) {
     const owed = wallet.feesOwed;
-    const available = wallet.availableBalance;
 
     // How much can we actually pull right now? If they have less than owed,
     // pull what's there and let availableBalance go negative for the rest.

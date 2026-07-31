@@ -2,7 +2,6 @@ import { body } from 'express-validator';
 import asyncHandler from '../utils/asyncHandler.js';
 import AppError from '../utils/AppError.js';
 import Job from '../models/Job.js';
-import Appointment from '../models/Appointment.js';
 import Profile from '../models/Profile.js';
 import User from '../models/User.js';
 import ArtisanProfile from '../models/ArtisanProfile.js';
@@ -13,7 +12,7 @@ import validate from '../middleware/validate.js';
 import { emitNotification } from '../utils/emitNotification.js';
 import { sendEmailSafe } from '../utils/sendEmail.js';
 import { releaseEscrow } from '../services/wallet.service.js';
-import { jobCreatedArtisan, jobStatusChanged, appointmentBooked } from '../utils/emailTemplates.js';
+import { jobCreatedArtisan } from '../utils/emailTemplates.js';
 
 // ── Validators ────────────────────────────────────────────────────────────────
 
