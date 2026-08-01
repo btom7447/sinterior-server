@@ -41,7 +41,28 @@ _Last updated: 2026-07-27 · Platform-canonical topology — other repos referen
 
 **Live:** User, Profile, ArtisanProfile, SupplierProfile, Product, Property, Order, Job, Quote, Appointment, Project, Review, Message, Notification, Bookmark, FeedPost, BlogPost, CareerListing, HelpArticle, ContactInquiry, VerificationRequest, Dispute, Wallet, WalletTransaction, EscrowEntry, PayoutRequest, BankAccount, PlatformSetting, CronLock.
 
-**Money flow:** Paystack charge → escrow hold (EscrowEntry) → hold period expiry (cron) → wallet credit → payout request → cooldown (cron) → Paystack transfer → webhook confirms/reverses. Wallet mutations are append-only WalletTransactions.
+**Money flow:** Paystack charge → escrow hold (EscrowEntry) → **release trigger** → wallet credit (`holding`) → hold period expiry (cron) → `available` → payout request → cooldown (cron) → Paystack transfer → webhook confirms/reverses. Wallet mutations are append-only WalletTransactions.
+
+**The release trigger is a person, not a timer.** This line previously read as
+though the cron released escrow; it does not — it only promotes an already-
+credited wallet balance from `holding` to `available`. Escrow itself is released
+by an event:
+
+- **Orders** — `POST /orders/:id/approve-delivery`, and only once *both* the
+  buyer and the supplier have approved. Either alone does nothing.
+- **Jobs** — work accepted by the client, or the auto-accept cron standing in
+  for a client who never responded.
+- **Admin** — manual release on a dispute.
+
+Orders have no auto-accept equivalent. An order nobody confirms holds its money
+indefinitely, which is why both confirmations need to be reachable in every
+client — a missing button here is not a UI gap, it is a supplier not being paid.
+Releases claim their entry with an atomic `findOneAndUpdate` on `status: 'held'`,
+so two triggers racing cannot pay twice.
+
+Cash-on-delivery orders never create an escrow entry at all — the money moved in
+person. Their platform fee is accrued against the supplier instead (`accrueCodFee`)
+and collected later.
 
 ### Feed pivot additions (P1)
 

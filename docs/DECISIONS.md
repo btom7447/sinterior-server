@@ -4,6 +4,51 @@ _Platform-canonical decision log — other repos reference this file._
 
 _Newest first. Every entry: date · decision · why · what it forecloses._
 
+## 2026-08-01 — Reviews are of a seller, never of a product
+
+`Product.rating` and `Product.reviewCount` exist on the schema and are written
+by nothing — no controller, no script, no job. Anything reading them would show
+every item in the shop as unrated forever. Reviews on this marketplace attach to
+a **Profile**, gated on a delivered order or an accepted job with that person,
+and `recomputeAggregates` writes the average onto the role's detail profile.
+
+Product detail attaches the seller's standing (`product.seller`) rather than the
+product's own dead fields. The list route deliberately does not: a grid of cards
+from one seller would repeat the same score down the page.
+
+Forecloses: no product-level ratings without a schema change — `Review` has no
+`productId`, so the same bag of cement from two sellers cannot be scored
+separately. The dead fields are left in place rather than dropped, because the
+web client may read them; treat them as always zero.
+
+## 2026-08-01 — Both role detail profiles are scaffolded at signup
+
+Registration created an `ArtisanProfile` for artisans and nothing for suppliers.
+That row is where a review's recomputed average lands, so a supplier who never
+edited their storefront had nowhere for a rating to live — and recompute updated
+both collections relying on exactly one matching, so when neither did it
+silently no-opped. The review row survived; the score it earned did not.
+
+Signup now scaffolds both. Recompute resolves the profile's role first and
+upserts into the one collection that belongs to it. Upserting both would give
+every reviewed profile an artisan record and a supplier record.
+
+Forecloses: nothing may assume a detail row is absent as a signal of "not
+onboarded yet" — an empty `SupplierProfile` now exists from registration.
+
+## 2026-08-01 — Ref comparisons go through `utils/refId.js`
+
+A Mongoose ref is an ObjectId until someone adds a `.populate()` upstream, at
+which point `ref.toString()` returns the document rather than its id, and every
+`ref.toString() === id` comparison silently stops matching. Adding a populate to
+`getById` would have refused every supplier their own order; the same pattern
+appears in the escrow split and the COD fee accrual, where being wrong misroutes
+money.
+
+All four sites read through `refId` / `isSameRef`. Forecloses: hand-rolled
+`.toString()` comparisons on refs — new ones should be treated as a review
+finding, not a style preference.
+
 ## 2026-07-30 — Staff are unsearchable; reporting replaces them
 
 `GET /profiles/search` now excludes `role: 'admin'` and the caller. An admin
