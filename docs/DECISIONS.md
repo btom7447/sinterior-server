@@ -4,6 +4,57 @@ _Platform-canonical decision log — other repos reference this file._
 
 _Newest first. Every entry: date · decision · why · what it forecloses._
 
+## 2026-08-01 — All line pricing resolves in config/pricing.js, and nowhere else
+
+Three things can decide what one line costs: the base price, the variant chosen,
+and how many are being bought. One pure module resolves all three, and every
+money path downstream — the escrow split, the supplier payout, the buyer's card
+— derives from what it returns. Two implementations would eventually disagree
+about what somebody owes.
+
+Rules that hold throughout: **variant prices are absolute, never deltas** (a
+"+₦500 for the large one" compounds unpredictably against a bulk tier and
+neither party can work out the result); **the cheapest applicable price wins**,
+so tiers entered out of order still charge what was meant; and **SKU keys are
+canonical and sorted**, computed server-side and never accepted from a client,
+because the key is what the stock decrement matches on.
+
+The client mirrors this in lib/pricing.ts with the same tests written against
+both, including one pinning the key format byte for byte. The server stays the
+authority — it re-prices every order — but a cart that quotes the single-unit
+price on a bulk order overstates the total by design.
+
+Forecloses: no pricing arithmetic in a screen, a hook or a controller.
+
+## 2026-08-01 — A pre-order is never judged on stock
+
+`fulfilment` is 'stocked' or 'preorder'. A pre-order is by definition a thing
+the supplier does not have, so treating it as ordinary stock would mean the only
+listings nobody can order are exactly the ones that exist to be ordered in
+advance. anyStock always passes them, priceLine reports no ceiling, check-stock
+never calls them sold out, update stops deriving inStock from a count they do
+not keep, and order creation skips the decrement entirely.
+
+The line snapshots that it was a pre-order when placed, like the name and the
+price, so a supplier who later starts stocking the item cannot make an old order
+look as though it should have arrived in days.
+
+## 2026-08-01 — Second-level vocabulary is fixed, not free text
+
+config/catalogue.js holds the subcategories. Free text produces "Porcelain",
+"porcelain tiles" and "Porcelian" within a week and a filter over them matches
+none of the three. A subcategory borrowed from another category is dropped on
+write rather than stored.
+
+Facet rails are built from live listings rather than from the vocabulary, so a
+rail can never offer something nobody stocks — tapping a dead filter teaches the
+shopper the shop is empty. Brand became a first-class field for the same reason
+it matters here at all: on a materials marketplace people buy Dangote or BUA,
+not "cement", and it was buried inside the name string.
+
+Forecloses: no free-text subcategories, and no filter rail generated from a
+constant.
+
 ## 2026-08-01 — Reviews are of a seller, never of a product
 
 `Product.rating` and `Product.reviewCount` exist on the schema and are written
