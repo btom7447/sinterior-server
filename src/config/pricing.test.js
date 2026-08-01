@@ -168,3 +168,46 @@ describe('anyStock', () => {
     assert.equal(anyStock({ skus: [{ quantity: 0 }, { quantity: 0 }] }), false);
   });
 });
+
+describe('pre-orders', () => {
+  const preorder = {
+    price: 465000,
+    quantity: 0,
+    inStock: false,
+    fulfilment: 'preorder',
+    preorderWeeksMin: 4,
+    preorderWeeksMax: 6,
+  };
+
+  test('is sellable with nothing in stock — that is the whole point', () => {
+    // Counting it against stock would mean the only listings that can never be
+    // ordered are exactly the ones that exist to be ordered in advance.
+    assert.equal(anyStock(preorder), true);
+  });
+
+  test('is sellable even when every variant reads zero', () => {
+    assert.equal(
+      anyStock({ ...preorder, skus: [{ quantity: 0 }, { quantity: 0 }] }),
+      true
+    );
+  });
+
+  test('reports no availability ceiling', () => {
+    const line = priceLine({ product: preorder, quantity: 40 });
+    assert.equal(line.available, undefined, 'a ceiling of 0 would block the order');
+    assert.equal(line.preorder, true);
+  });
+
+  test('still prices, and still takes bulk tiers', () => {
+    const line = priceLine({
+      product: { ...preorder, priceTiers: [{ minQty: 10, price: 440000 }] },
+      quantity: 12,
+    });
+    assert.equal(line.unitPrice, 440000);
+  });
+
+  test('a stocked product is not marked as one', () => {
+    assert.equal(priceLine({ product: cement, quantity: 1 }).preorder, false);
+    assert.equal(anyStock({ ...cement, quantity: 0 }), false);
+  });
+});

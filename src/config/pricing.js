@@ -106,10 +106,13 @@ export function priceLine({ product, quantity, options }) {
   const basePrice = variantPrice ?? product?.price;
   const unitPrice = tieredPrice(basePrice, product?.priceTiers, quantity);
 
-  const available = num(sku ? sku.quantity : product?.quantity);
+  // Undefined rather than zero: the caller reads "no ceiling", which is the
+  // truth for something being brought in to order.
+  const available = isPreorder(product) ? null : num(sku ? sku.quantity : product?.quantity);
 
   return {
     unitPrice,
+    preorder: isPreorder(product),
     /** Null when the listing has no variants, which is most of them. */
     skuKey: sku ? sku.key : null,
     selectedOptions: sku ? sku.options : undefined,
@@ -120,13 +123,23 @@ export function priceLine({ product, quantity, options }) {
   };
 }
 
+/** Brought in when ordered, rather than held. */
+export function isPreorder(product) {
+  return product?.fulfilment === 'preorder';
+}
+
 /**
  * Whether a product can be bought at all right now.
  *
  * A listing with variants is out of stock only when every variant is — one
  * sold-out colour must not hide the other four.
+ *
+ * A pre-order is always sellable. It is a thing nobody has yet, so counting it
+ * against stock would mean the only listings that could never be ordered are
+ * exactly the ones that exist to be ordered in advance.
  */
 export function anyStock(product) {
+  if (isPreorder(product)) return true;
   const skus = product?.skus ?? [];
   if (skus.length) return skus.some((s) => Number(s.quantity) > 0);
   return Number(product?.quantity) > 0;

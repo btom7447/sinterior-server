@@ -39,6 +39,14 @@ const orderItemSchema = new mongoose.Schema(
      * unchanged, and a supplier renaming "Matt" to "Matte" would strand it.
      */
     skuKey: { type: String, trim: true },
+    /**
+     * Whether this line was a pre-order when it was placed.
+     *
+     * Snapshotted like the name and the price: a supplier who later starts
+     * stocking the item must not make an old order look as though it should
+     * have arrived in days.
+     */
+    preorder: { type: Boolean, default: false },
   },
   { _id: false }
 );

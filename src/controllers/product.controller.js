@@ -230,6 +230,7 @@ export const create = asyncHandler(async (req, res) => {
   const {
     name, description, category, subcategory, price, compareAtPrice, unit, quantity,
     specs, images, lowStockThreshold, sku, barcode, weightKg, dimensionsCm,
+    fulfilment, preorderWeeksMin, preorderWeeksMax,
     variantOptions, skus, priceTiers, returnWindowDays, warrantyMonths,
     freeShippingOver, relatedIds,
   } = req.body;
@@ -263,6 +264,9 @@ export const create = asyncHandler(async (req, res) => {
     warrantyMonths,
     freeShippingOver,
     relatedIds: Array.isArray(relatedIds) ? relatedIds : undefined,
+    fulfilment: fulfilment === 'preorder' ? 'preorder' : 'stocked',
+    preorderWeeksMin,
+    preorderWeeksMax,
   });
 
   sendSuccess(res, { product }, 'Product created.', 201);
@@ -290,6 +294,7 @@ export const update = asyncHandler(async (req, res) => {
     'unit', 'quantity', 'images', 'inStock', 'specs', 'lowStockThreshold',
     'sku', 'barcode', 'weightKg', 'dimensionsCm', 'variantOptions', 'skus',
     'priceTiers', 'returnWindowDays', 'warrantyMonths', 'freeShippingOver', 'relatedIds',
+    'fulfilment', 'preorderWeeksMin', 'preorderWeeksMax',
   ];
   const updates = {};
   ALLOWED.forEach((field) => {
@@ -318,7 +323,12 @@ export const update = asyncHandler(async (req, res) => {
    * An explicit inStock in the same request still wins; a supplier is allowed
    * to say "I have thirty but stop selling it".
    */
-  if (updates.quantity !== undefined && updates.inStock === undefined) {
+  const preorder = (updates.fulfilment ?? product.fulfilment) === 'preorder';
+  if (preorder) {
+    // Always orderable. Deriving inStock from a count it does not keep would
+    // switch off the one kind of listing that exists to be ordered in advance.
+    updates.inStock = true;
+  } else if (updates.quantity !== undefined && updates.inStock === undefined) {
     updates.inStock = Number(updates.quantity) > 0;
   }
 
@@ -362,7 +372,7 @@ export const checkStock = asyncHandler(async (req, res) => {
 
   const productIds = items.map((i) => i.productId);
   const products = await Product.find({ _id: { $in: productIds }, isActive: true }).select(
-    '_id name quantity inStock price unit skus priceTiers'
+    '_id name quantity inStock price unit skus priceTiers fulfilment preorderWeeksMin preorderWeeksMax'
   );
   const productMap = new Map(products.map((p) => [p._id.toString(), p]));
 
@@ -386,6 +396,13 @@ export const checkStock = asyncHandler(async (req, res) => {
      */
     const line = priceLine({ product, quantity: item.quantity, options: item.selectedSpecs });
     const pricing = { name: product.name, price: line.unitPrice, unit: product.unit };
+
+    // A pre-order has no ceiling to check against. Reporting it as sold out is
+    // how a cart would refuse the one kind of item that is always orderable.
+    if (line.preorder) {
+      return { productId: item.productId, available: true, preorder: true, ...pricing };
+    }
+
     const stock = line.available ?? 0;
 
     if (stock <= 0) {

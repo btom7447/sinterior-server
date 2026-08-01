@@ -170,6 +170,27 @@ const productSchema = new mongoose.Schema(
       },
     ],
 
+    // ── How it is fulfilled ───────────────────────────────────────────────
+    /**
+     * Whether this is on the ground or brought in when ordered.
+     *
+     * A pre-order is, by definition, a thing the supplier does not have — so it
+     * must never be refused by the stock guards, and it must never decrement a
+     * count. Treating it as ordinary stock would either block every sale or
+     * drive the quantity negative.
+     */
+    fulfilment: {
+      type: String,
+      enum: {
+        values: ['stocked', 'preorder'],
+        message: "Fulfilment must be 'stocked' or 'preorder'",
+      },
+      default: 'stocked',
+    },
+    /** The window quoted to buyers, e.g. 4 to 6 weeks. */
+    preorderWeeksMin: { type: Number, min: 0, default: null },
+    preorderWeeksMax: { type: Number, min: 0, default: null },
+
     // ── Bulk pricing ──────────────────────────────────────────────────────
     /**
      * "This price from this quantity upward." The descriptions already promise

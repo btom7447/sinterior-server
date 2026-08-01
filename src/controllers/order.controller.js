@@ -109,12 +109,20 @@ export const create = asyncHandler(async (req, res) => {
       quantity,
       priceAtOrder: line.unitPrice,
       skuKey: line.skuKey ?? undefined,
+      // Recorded on the line so the order screens can say "arriving in weeks,
+      // not days" long after the listing has changed.
+      preorder: line.preorder || undefined,
       ...(selectedSpecs ? { selectedSpecs } : {}),
     };
   });
 
   // Atomically decrement stock for each product
   for (const item of enrichedItems) {
+    // A pre-order draws from nothing. Decrementing would push a count nobody is
+    // holding into the negative, and the low-stock warning would fire on a
+    // listing that never had stock to be low on.
+    if (item.preorder) continue;
+
     /*
      * A variant draws from its own counter, not the product's. Decrementing the
      * wrong one oversells that variant and strands the rest, and the guard has

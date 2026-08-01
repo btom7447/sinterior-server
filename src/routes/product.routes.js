@@ -73,6 +73,25 @@ router.get('/saved', protect, listSaved);
 router.post('/:id/save', protect, toggleSaved);
 router.delete('/:id/save', protect, toggleSaved);
 
+// ── POST /api/v1/products/review-images ──────────────────────────────────────
+/*
+ * Photographs for a review, uploaded by whoever is writing it.
+ *
+ * Separate from /upload-images, which is restricted to suppliers because it
+ * feeds listings. A buyer's photograph of what actually turned up is the most
+ * useful thing on a review page and there was no way for them to attach one —
+ * the model accepted images that nothing could produce.
+ *
+ * Four at a time, matching the cap on the review itself.
+ */
+router.post(
+  '/review-images',
+  protect,
+  uploadMultiple('images', 4),
+  resizeImage(1200, 0, 85),
+  uploadImages
+);
+
 // ── Reviews of the product itself ────────────────────────────────────────────
 // Distinct from /reviews, which is about the seller as a person. Declared
 // before /:id so "reviews" is never read as part of a product id.
@@ -184,6 +203,9 @@ router.post(
     body('freeShippingOver').optional({ nullable: true }).isFloat({ min: 0 }),
     body('relatedIds').optional().isArray({ max: 12 }),
     body('relatedIds.*').optional().isMongoId(),
+    body('fulfilment').optional().isIn(['stocked', 'preorder']),
+    body('preorderWeeksMin').optional({ nullable: true }).isInt({ min: 0, max: 104 }),
+    body('preorderWeeksMax').optional({ nullable: true }).isInt({ min: 0, max: 104 }),
   ],
   validate,
   create
@@ -219,6 +241,9 @@ router.patch(
     body('freeShippingOver').optional({ nullable: true }).isFloat({ min: 0 }),
     body('relatedIds').optional().isArray({ max: 12 }),
     body('relatedIds.*').optional().isMongoId(),
+    body('fulfilment').optional().isIn(['stocked', 'preorder']),
+    body('preorderWeeksMin').optional({ nullable: true }).isInt({ min: 0, max: 104 }),
+    body('preorderWeeksMax').optional({ nullable: true }).isInt({ min: 0, max: 104 }),
   ],
   validate,
   update
