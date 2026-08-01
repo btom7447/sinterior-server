@@ -201,6 +201,32 @@ export const update = asyncHandler(async (req, res) => {
     updates.specs = normalizeSpecs(updates.specs) || {};
   }
 
+  /*
+   * Stock and buyability are two fields that must never disagree.
+   *
+   * `create` derives inStock from the quantity; this did not, so a supplier who
+   * restocked a sold-out product went on being shown as out of stock — the shop
+   * hid the Add button and nobody could buy what had just arrived. The reverse
+   * was worse in a quieter way: quantity edited to zero left inStock true, so
+   * buyers filled a cart that could only fail at checkout.
+   *
+   * An explicit inStock in the same request still wins; a supplier is allowed
+   * to say "I have thirty but stop selling it".
+   */
+  if (updates.quantity !== undefined && updates.inStock === undefined) {
+    updates.inStock = Number(updates.quantity) > 0;
+  }
+
+  /*
+   * Restocking re-arms the low-stock warning. It is a one-shot flag set when
+   * the quantity crosses the threshold downward, and nothing cleared it — so a
+   * product that ran low once would never warn again for the rest of its life.
+   */
+  const threshold = updates.lowStockThreshold ?? product.lowStockThreshold ?? 20;
+  if (updates.quantity !== undefined && Number(updates.quantity) > threshold) {
+    updates.lowStockNotified = false;
+  }
+
   const updated = await Product.findByIdAndUpdate(
     req.params.id,
     { $set: updates },
