@@ -10,6 +10,8 @@ import {
   checkStock,
   listSaved,
   toggleSaved,
+  facets,
+  sections,
 } from '../controllers/product.controller.js';
 import {
   listProductReviews,
@@ -38,10 +40,18 @@ router.get(
     query('category').optional().isString().trim(),
     query('search').optional().isString().trim(),
     query('supplierId').optional().isMongoId().withMessage('Invalid supplierId'),
+    query('subcategory').optional().isString().trim(),
+    query('brand').optional().isString().trim(),
+    query('fulfilment').optional().isIn(['stocked', 'preorder']),
   ],
   validate,
   list
 );
+
+// ── Browse helpers ───────────────────────────────────────────────────────────
+// Both before /:id, so neither word is read as a product id.
+router.get('/facets', facets);
+router.get('/sections', sections);
 
 // ── POST /api/v1/products/upload-images ──────────────────────────────────────
 router.post(
@@ -192,6 +202,7 @@ router.post(
     body('images.*').optional().isURL().withMessage('Each image must be a valid URL'),
     body('specs').optional().isObject().withMessage('specs must be an object'),
     body('lowStockThreshold').optional().isInt({ min: 0 }).withMessage('lowStockThreshold must be a non-negative integer'),
+    body('brand').optional().isString().trim().isLength({ max: 60 }),
     body('sku').optional().isString().trim().isLength({ max: 60 }),
     body('barcode').optional().isString().trim().isLength({ max: 40 }),
     body('weightKg').optional().isFloat({ min: 0 }),
@@ -230,6 +241,7 @@ router.patch(
     body('images').optional().isArray(),
     body('specs').optional().isObject(),
     body('lowStockThreshold').optional().isInt({ min: 0 }).withMessage('lowStockThreshold must be a non-negative integer'),
+    body('brand').optional().isString().trim().isLength({ max: 60 }),
     body('sku').optional().isString().trim().isLength({ max: 60 }),
     body('barcode').optional().isString().trim().isLength({ max: 40 }),
     body('weightKg').optional().isFloat({ min: 0 }),

@@ -7,6 +7,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import { priceLine, skuKeyFor } from '../config/pricing.js';
+import { isValidSubcategory } from '../config/catalogue.js';
 
 /**
  * Normalize specs to the canonical { key: [values] } format.
@@ -84,13 +85,26 @@ function normalizeTiers(raw) {
 
 // ── GET /api/v1/products ──────────────────────────────────────────────────────
 export const list = asyncHandler(async (req, res) => {
-  const { category, search, supplierId } = req.query;
+  const { category, subcategory, brand, search, supplierId, fulfilment } = req.query;
   const { page, limit, skip } = getPagination(req.query);
 
   const filter = { isActive: true };
 
   if (category) {
     filter.category = category;
+  }
+
+  if (subcategory) {
+    filter.subcategory = subcategory;
+  }
+
+  if (brand) {
+    filter.brand = brand;
+  }
+
+  // ?fulfilment=preorder — the one axis buyers ask about that is not a category.
+  if (fulfilment === 'preorder' || fulfilment === 'stocked') {
+    filter.fulfilment = fulfilment;
   }
 
   if (supplierId) {
@@ -142,6 +156,99 @@ async function withSavedFlag(req, products) {
   const mine = new Set(saved.map((s) => String(s.productId)));
   return list.map((p) => ({ ...p, savedByMe: mine.has(String(p._id)) }));
 }
+
+// ── GET /api/v1/products/facets ──────────────────────────────────────────────
+/**
+ * What is actually on the shelf, for building the filter rails.
+ *
+ * Derived from live listings rather than from the fixed vocabulary, because a
+ * rail offering "Terrazzo" when nobody stocks any teaches the shopper the shop
+ * is empty. Counts come back so the rail can order itself by what there is
+ * most of rather than alphabetically.
+ */
+export const facets = asyncHandler(async (req, res) => {
+  const match = { isActive: true };
+  if (req.query.category) match.category = req.query.category;
+
+  const [subcategories, brands, categories] = await Promise.all([
+    Product.aggregate([
+      { $match: { ...match, subcategory: { $nin: [null, ''] } } },
+      { $group: { _id: '$subcategory', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]),
+    Product.aggregate([
+      { $match: { ...match, brand: { $nin: [null, ''] } } },
+      { $group: { _id: '$brand', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]),
+    Product.aggregate([
+      { $match: { isActive: true } },
+      { $group: { _id: '$category', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]),
+  ]);
+
+  const shape = (rows) => rows.filter((r) => r._id).map((r) => ({ value: r._id, count: r.count }));
+
+  sendSuccess(
+    res,
+    {
+      categories: shape(categories),
+      subcategories: shape(subcategories),
+      brands: shape(brands),
+    },
+    'Facets retrieved.'
+  );
+});
+
+// ── GET /api/v1/products/sections ────────────────────────────────────────────
+/**
+ * The browse screen: a few listings from each category, rather than one flat
+ * grid of everything.
+ *
+ * Somebody who does not yet know what they want cannot use an infinite grid —
+ * they need to see that the shop has cement *and* tiles *and* doors. One
+ * aggregation rather than one query per category, because fifteen round trips
+ * to draw a home screen is how a shop feels slow on a Nigerian connection.
+ */
+export const sections = asyncHandler(async (req, res) => {
+  const per = Math.min(parseInt(req.query.per, 10) || 6, 12);
+
+  const rows = await Product.aggregate([
+    { $match: { isActive: true } },
+    { $sort: { soldCount: -1, createdAt: -1 } },
+    {
+      $group: {
+        _id: '$category',
+        total: { $sum: 1 },
+        products: {
+          $push: {
+            _id: '$_id',
+            name: '$name',
+            brand: '$brand',
+            price: '$price',
+            compareAtPrice: '$compareAtPrice',
+            unit: '$unit',
+            images: '$images',
+            rating: '$rating',
+            reviewCount: '$reviewCount',
+            soldCount: '$soldCount',
+            inStock: '$inStock',
+            quantity: '$quantity',
+            fulfilment: '$fulfilment',
+            preorderWeeksMin: '$preorderWeeksMin',
+            preorderWeeksMax: '$preorderWeeksMax',
+            category: '$category',
+          },
+        },
+      },
+    },
+    { $project: { category: '$_id', total: 1, products: { $slice: ['$products', per] }, _id: 0 } },
+    { $sort: { total: -1 } },
+  ]);
+
+  sendSuccess(res, { sections: rows }, 'Sections retrieved.');
+});
 
 // ── GET /api/v1/products/:id ──────────────────────────────────────────────────
 export const getById = asyncHandler(async (req, res) => {
@@ -228,7 +335,7 @@ export const create = asyncHandler(async (req, res) => {
   }
 
   const {
-    name, description, category, subcategory, price, compareAtPrice, unit, quantity,
+    name, description, category, subcategory, brand, price, compareAtPrice, unit, quantity,
     specs, images, lowStockThreshold, sku, barcode, weightKg, dimensionsCm,
     fulfilment, preorderWeeksMin, preorderWeeksMax,
     variantOptions, skus, priceTiers, returnWindowDays, warrantyMonths,
@@ -241,7 +348,10 @@ export const create = asyncHandler(async (req, res) => {
     name,
     description,
     category,
-    subcategory: subcategory || undefined,
+    // Filed only under a subcategory that belongs to the category, so a filter
+    // over the fixed vocabulary cannot miss it.
+    subcategory: isValidSubcategory(category, subcategory) ? subcategory || undefined : undefined,
+    brand: brand || undefined,
     price,
     // Only kept when it is genuinely higher; a "was" price at or below the
     // asking price is not a promotion and must not be stored as one.
@@ -290,7 +400,7 @@ export const update = asyncHandler(async (req, res) => {
   }
 
   const ALLOWED = [
-    'name', 'description', 'category', 'subcategory', 'price', 'compareAtPrice',
+    'name', 'description', 'category', 'subcategory', 'brand', 'price', 'compareAtPrice',
     'unit', 'quantity', 'images', 'inStock', 'specs', 'lowStockThreshold',
     'sku', 'barcode', 'weightKg', 'dimensionsCm', 'variantOptions', 'skus',
     'priceTiers', 'returnWindowDays', 'warrantyMonths', 'freeShippingOver', 'relatedIds',
@@ -300,6 +410,13 @@ export const update = asyncHandler(async (req, res) => {
   ALLOWED.forEach((field) => {
     if (req.body[field] !== undefined) updates[field] = req.body[field];
   });
+
+  // A subcategory that does not belong to the category is dropped rather than
+  // stored, or the second-level rail would offer a filter matching nothing.
+  if (updates.subcategory !== undefined) {
+    const category = updates.category ?? product.category;
+    if (!isValidSubcategory(category, updates.subcategory)) updates.subcategory = undefined;
+  }
 
   // Normalize specs to array-of-values format
   if (updates.specs) {

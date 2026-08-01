@@ -119,6 +119,14 @@ const productSchema = new mongoose.Schema(
       default: () => ({ 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }),
     },
     // ── Identity ──────────────────────────────────────────────────────────
+    /**
+     * Who made it.
+     *
+     * On a materials marketplace the brand *is* the purchase decision — people
+     * buy Dangote or BUA, not "cement". It was buried inside the name string,
+     * which meant it could not be filtered, grouped or shown as its own line.
+     */
+    brand: { type: String, trim: true, maxlength: 60 },
     /** The supplier's own code. Buyers use it to check they have the right thing. */
     sku: { type: String, trim: true, maxlength: 60 },
     barcode: { type: String, trim: true, maxlength: 40 },
@@ -250,6 +258,8 @@ const productSchema = new mongoose.Schema(
 );
 
 productSchema.index({ supplierId: 1 });
+productSchema.index({ category: 1, subcategory: 1 });
+productSchema.index({ brand: 1 });
 productSchema.index({ category: 1 });
 productSchema.index({ isActive: 1 });
 productSchema.index({ name: 'text', description: 'text' }); // full-text search
