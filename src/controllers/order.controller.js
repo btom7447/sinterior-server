@@ -386,6 +386,52 @@ export const updateStatus = asyncHandler(async (req, res) => {
   order.status = status;
   await order.save();
 
+  /*
+   * Cancelling returns the stock the order took.
+   *
+   * `create` decrements on the way in and nothing put it back, so every
+   * cancellation permanently ate inventory — a supplier with four hundred bags
+   * and ten cancelled forty-bag orders reads as sold out with four hundred bags
+   * in the yard, and the shop hides the Add button on all of them. Unpaid
+   * orders can be cancelled and abandoned checkouts create orders, so this was
+   * not a rare path.
+   *
+   * Safe to run exactly once: VALID_STATUS_TRANSITIONS leaves `cancelled` with
+   * nowhere to go, so a second cancellation is refused before reaching here.
+   * Pre-orders are skipped because they never decremented anything.
+   */
+  if (status === 'cancelled') {
+    await Promise.all(
+      order.items
+        .filter((item) => !item.preorder)
+        .map((item) =>
+          item.skuKey
+            ? Product.updateOne(
+                { _id: refId(item.productId) },
+                { $inc: { 'skus.$[row].quantity': item.quantity } },
+                { arrayFilters: [{ 'row.key': item.skuKey }] }
+              ).catch(() => {})
+            : Product.updateOne(
+                { _id: refId(item.productId) },
+                { $inc: { quantity: item.quantity } }
+              ).catch(() => {})
+        )
+    );
+
+    // Anything that went to zero on the way out is sellable again now.
+    const touched = await Product.find({
+      _id: { $in: order.items.map((item) => refId(item.productId)) },
+    });
+    await Promise.all(
+      touched.map((product) => {
+        const sellable = anyStock(product);
+        if (product.inStock === sellable) return null;
+        product.inStock = sellable;
+        return product.save().catch(() => {});
+      })
+    );
+  }
+
   // Notify the other party. For supplier-driven transitions (confirmed/shipped/delivered)
   // we notify the buyer; for cancellations we notify whichever side didn't cancel.
   const notifyUserId =
