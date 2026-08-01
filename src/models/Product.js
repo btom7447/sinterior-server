@@ -70,6 +70,19 @@ const productSchema = new mongoose.Schema(
       of: [String],
       default: {},
     },
+    /**
+     * What it used to cost, when it is on promotion.
+     *
+     * Only ever displayed as a strike-through beside the asking price, and only
+     * when it is genuinely higher — a "was" price below the current one is
+     * either a mistake or a dark pattern, and the client refuses to render it
+     * either way.
+     */
+    compareAtPrice: {
+      type: Number,
+      min: [0, 'Compare-at price cannot be negative'],
+      default: null,
+    },
     rating: {
       type: Number,
       default: 0,

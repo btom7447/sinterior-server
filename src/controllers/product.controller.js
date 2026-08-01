@@ -152,7 +152,7 @@ export const create = asyncHandler(async (req, res) => {
     throw new AppError('Supplier profile not found.', 404);
   }
 
-  const { name, description, category, subcategory, price, unit, quantity, specs, images, lowStockThreshold } = req.body;
+  const { name, description, category, subcategory, price, compareAtPrice, unit, quantity, specs, images, lowStockThreshold } = req.body;
 
   const qty = Math.max(0, parseInt(quantity, 10) || 1);
   const product = await Product.create({
@@ -162,6 +162,10 @@ export const create = asyncHandler(async (req, res) => {
     category,
     subcategory: subcategory || undefined,
     price,
+    // Only kept when it is genuinely higher; a "was" price at or below the
+    // asking price is not a promotion and must not be stored as one.
+    compareAtPrice:
+      Number(compareAtPrice) > Number(price) ? Number(compareAtPrice) : undefined,
     unit,
     quantity: qty,
     inStock: qty > 0,
@@ -190,7 +194,7 @@ export const update = asyncHandler(async (req, res) => {
     throw new AppError('You are not authorised to update this product.', 403);
   }
 
-  const ALLOWED = ['name', 'description', 'category', 'subcategory', 'price', 'unit', 'quantity', 'images', 'inStock', 'specs', 'lowStockThreshold'];
+  const ALLOWED = ['name', 'description', 'category', 'subcategory', 'price', 'compareAtPrice', 'unit', 'quantity', 'images', 'inStock', 'specs', 'lowStockThreshold'];
   const updates = {};
   ALLOWED.forEach((field) => {
     if (req.body[field] !== undefined) updates[field] = req.body[field];
