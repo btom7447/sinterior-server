@@ -43,6 +43,7 @@ router.get(
     query('subcategory').optional().isString().trim(),
     query('brand').optional().isString().trim(),
     query('fulfilment').optional().isIn(['stocked', 'preorder']),
+    query('sort').optional().isIn(['newest', 'price-asc', 'price-desc', 'rating', 'popular']),
   ],
   validate,
   list

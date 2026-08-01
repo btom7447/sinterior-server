@@ -85,7 +85,7 @@ function normalizeTiers(raw) {
 
 // ── GET /api/v1/products ──────────────────────────────────────────────────────
 export const list = asyncHandler(async (req, res) => {
-  const { category, subcategory, brand, search, supplierId, fulfilment } = req.query;
+  const { category, subcategory, brand, search, supplierId, fulfilment, sort } = req.query;
   const { page, limit, skip } = getPagination(req.query);
 
   const filter = { isActive: true };
@@ -98,8 +98,17 @@ export const list = asyncHandler(async (req, res) => {
     filter.subcategory = subcategory;
   }
 
+  /*
+   * Brands are multi-select: "Dangote or BUA" is one question, not two
+   * searches. Sent comma-separated because a repeated query parameter is
+   * parsed differently by every client library and this one is read by two.
+   */
   if (brand) {
-    filter.brand = brand;
+    const brands = String(brand)
+      .split(',')
+      .map((b) => b.trim())
+      .filter(Boolean);
+    if (brands.length) filter.brand = brands.length === 1 ? brands[0] : { $in: brands };
   }
 
   // ?fulfilment=preorder — the one axis buyers ask about that is not a category.
@@ -116,10 +125,26 @@ export const list = asyncHandler(async (req, res) => {
     filter.$text = { $search: search };
   }
 
+  /*
+   * Sort is a separate question from filter, and the shop needs both.
+   *
+   * A text search always sorts by relevance regardless: somebody who typed a
+   * word wants the closest match first, and overriding that with "newest"
+   * buries the thing they asked for.
+   */
+  const SORTS = {
+    newest: { createdAt: -1 },
+    'price-asc': { price: 1 },
+    'price-desc': { price: -1 },
+    rating: { rating: -1, reviewCount: -1 },
+    popular: { soldCount: -1, createdAt: -1 },
+  };
+  const order = search ? { score: { $meta: 'textScore' } } : SORTS[sort] ?? SORTS.newest;
+
   const [total, products] = await Promise.all([
     Product.countDocuments(filter),
     Product.find(filter)
-      .sort(search ? { score: { $meta: 'textScore' } } : { createdAt: -1 })
+      .sort(order)
       .skip(skip)
       .limit(limit)
       .populate('supplierId', 'fullName avatarUrl city state'),
