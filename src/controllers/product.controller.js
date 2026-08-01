@@ -206,14 +206,35 @@ export const facets = asyncHandler(async (req, res) => {
       { $group: { _id: '$brand', count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]),
+    /*
+     * Categories carry a photograph as well as a count.
+     *
+     * The rail was drawn with generic glyphs, and a glyph for "Aggregates" is
+     * either a pile of dots or a lie. Every large shop in this market —
+     * Temu, Jumia, Konga — puts a real product photograph there instead,
+     * because the thing itself is more recognisable than any icon of it.
+     *
+     * Best-selling first, so the picture is of something representative rather
+     * than of whatever happened to be listed last.
+     */
     Product.aggregate([
       { $match: { isActive: true } },
-      { $group: { _id: '$category', count: { $sum: 1 } } },
+      { $sort: { soldCount: -1, createdAt: -1 } },
+      {
+        $group: {
+          _id: '$category',
+          count: { $sum: 1 },
+          image: { $first: { $arrayElemAt: ['$images', 0] } },
+        },
+      },
       { $sort: { count: -1 } },
     ]),
   ]);
 
-  const shape = (rows) => rows.filter((r) => r._id).map((r) => ({ value: r._id, count: r.count }));
+  const shape = (rows) =>
+    rows
+      .filter((r) => r._id)
+      .map((r) => ({ value: r._id, count: r.count, ...(r.image ? { image: r.image } : {}) }));
 
   sendSuccess(
     res,
