@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 import Profile from '../models/Profile.js';
 import ArtisanProfile from '../models/ArtisanProfile.js';
+import SupplierProfile from '../models/SupplierProfile.js';
 import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
@@ -112,7 +113,12 @@ export const register = asyncHandler(async (req, res) => {
       { session }
     );
 
-    // If role is artisan, scaffold an empty artisan profile so it's ready for onboarding
+    // Scaffold the role's detail profile so it is ready for onboarding.
+    //
+    // Suppliers were missed here, and the gap was not cosmetic: reviews write
+    // their recomputed average onto this row, so a supplier without one could
+    // be reviewed and never show a rating — the review stored, the score
+    // silently dropped. Their products also came back with no seller block.
     if (role === 'artisan') {
       await ArtisanProfile.create(
         [
@@ -123,6 +129,8 @@ export const register = asyncHandler(async (req, res) => {
         ],
         { session }
       );
+    } else if (role === 'supplier') {
+      await SupplierProfile.create([{ profileId: profile._id }], { session });
     }
 
     await session.commitTransaction();

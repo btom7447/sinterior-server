@@ -31,18 +31,34 @@ const recomputeAggregates = async (targetProfileId) => {
   // Round to 1 decimal so the public UI shows e.g. 4.7 not 4.66666.
   const avg = stats[0]?.avg ? Math.round(stats[0].avg * 10) / 10 : 0;
 
-  // Try both — only one will match. updateOne is a no-op if the profile isn't
-  // an artisan / isn't a supplier.
-  await Promise.all([
-    ArtisanProfile.updateOne(
-      { profileId: targetProfileId },
-      { $set: { rating: avg, reviewCount: count } }
-    ),
-    SupplierProfile.updateOne(
-      { profileId: targetProfileId },
-      { $set: { rating: avg, reviewCount: count } }
-    ),
-  ]);
+  /*
+   * Write to the row that belongs to this profile's role, creating it if it is
+   * not there.
+   *
+   * This used to update both collections and rely on exactly one matching.
+   * When neither did — a supplier registered before signup scaffolded their
+   * detail profile — both updates were no-ops and the review's score was
+   * silently thrown away. The review row survived; the rating it earned did
+   * not, and nothing anywhere said so.
+   *
+   * Upsert is safe only once the role is known. Upserting both would give
+   * every reviewed profile an artisan record and a supplier record.
+   */
+  const profile = await Profile.findById(targetProfileId).select('role').lean();
+  const Model =
+    profile?.role === 'supplier'
+      ? SupplierProfile
+      : profile?.role === 'artisan'
+        ? ArtisanProfile
+        : null;
+
+  if (!Model) return;
+
+  await Model.updateOne(
+    { profileId: targetProfileId },
+    { $set: { rating: avg, reviewCount: count } },
+    { upsert: true, setDefaultsOnInsert: true }
+  );
 };
 
 export const validateReview = [
