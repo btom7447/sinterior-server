@@ -121,7 +121,9 @@ export const getById = asyncHandler(async (req, res) => {
   const sellerProfileId = product.supplierId?._id ?? product.supplierId;
   const seller = sellerProfileId
     ? await SupplierProfile.findOne({ profileId: sellerProfileId })
-        .select('rating reviewCount isVerified businessName')
+        .select(
+          'rating reviewCount isVerified businessName deliveryDays minOrderValue coverageStates shippingRates courierServices'
+        )
         .lean()
     : null;
 
@@ -136,6 +138,29 @@ export const getById = asyncHandler(async (req, res) => {
               reviewCount: seller.reviewCount ?? 0,
               isVerified: !!seller.isVerified,
               businessName: seller.businessName ?? null,
+            }
+          : null,
+
+        /*
+         * What it costs to get here and how long it takes.
+         *
+         * Every one of these fields was already being collected from suppliers
+         * and stored, and none of it had ever reached a buyer — checkout said
+         * "delivery cost may be added by the supplier", which is the least
+         * useful true thing we could have said. The rates map is small enough
+         * (one entry per state) to send whole, so the client can price the
+         * buyer's own state without a second request.
+         */
+        delivery: seller
+          ? {
+              leadTime: seller.deliveryDays ?? null,
+              minOrderValue: seller.minOrderValue ?? null,
+              coverage: seller.coverageStates ?? null,
+              ratesByState: seller.shippingRates ?? {},
+              couriers: (seller.courierServices ?? []).map((c) => ({
+                name: c.name ?? null,
+                phone: c.phone ?? null,
+              })),
             }
           : null,
       },

@@ -11,6 +11,11 @@ import {
   listSaved,
   toggleSaved,
 } from '../controllers/product.controller.js';
+import {
+  listProductReviews,
+  createProductReview,
+  deleteProductReview,
+} from '../controllers/productReview.controller.js';
 import { protect, optionalAuth, restrictTo } from '../middleware/auth.js';
 import { uploadMultiple, resizeImage } from '../middleware/upload.js';
 import validate from '../middleware/validate.js';
@@ -61,6 +66,39 @@ router.get('/saved', protect, listSaved);
 // ── POST/DELETE /api/v1/products/:id/save ────────────────────────────────────
 router.post('/:id/save', protect, toggleSaved);
 router.delete('/:id/save', protect, toggleSaved);
+
+// ── Reviews of the product itself ────────────────────────────────────────────
+// Distinct from /reviews, which is about the seller as a person. Declared
+// before /:id so "reviews" is never read as part of a product id.
+router.get(
+  '/:id/reviews',
+  [param('id').isMongoId().withMessage('Invalid product ID')],
+  validate,
+  listProductReviews
+);
+router.post(
+  '/:id/reviews',
+  protect,
+  [
+    param('id').isMongoId().withMessage('Invalid product ID'),
+    body('rating').isInt({ min: 1, max: 5 }).withMessage('Rating must be between 1 and 5'),
+    body('comment').optional().isString().trim().isLength({ max: 1000 }),
+    body('images').optional().isArray({ max: 4 }).withMessage('At most 4 photographs'),
+    body('images.*').optional().isURL().withMessage('Each photograph must be a valid URL'),
+  ],
+  validate,
+  createProductReview
+);
+router.delete(
+  '/:id/reviews/:reviewId',
+  protect,
+  [
+    param('id').isMongoId().withMessage('Invalid product ID'),
+    param('reviewId').isMongoId().withMessage('Invalid review ID'),
+  ],
+  validate,
+  deleteProductReview
+);
 
 // ── GET /api/v1/products/:id ──────────────────────────────────────────────────
 router.get(

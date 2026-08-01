@@ -454,6 +454,21 @@ export const approveDelivery = asyncHandler(async (req, res) => {
   // On transition to delivered: release any escrow entries (online-paid orders)
   // OR accrue COD platform fee if there's no escrow (cash-collected orders).
   if (transitioned) {
+    /*
+     * Credit the sale to each listing. Delivered is the only honest moment for
+     * this — an order counted at checkout advertises sales that abandoned
+     * payments and cancellations would later un-make, and nothing walks a
+     * counter backwards.
+     */
+    await Promise.all(
+      order.items.map((item) =>
+        Product.updateOne(
+          { _id: refId(item.productId) },
+          { $inc: { soldCount: item.quantity } }
+        ).catch(() => {})
+      )
+    );
+
     // Read the held entry IDs first — we'll claim each one atomically below
     // so a duplicate transition (rare but possible) doesn't double-release.
     const heldEntries = await EscrowEntry.find({

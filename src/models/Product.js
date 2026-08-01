@@ -83,6 +83,19 @@ const productSchema = new mongoose.Schema(
       min: [0, 'Compare-at price cannot be negative'],
       default: null,
     },
+    /**
+     * How many have actually been delivered.
+     *
+     * Denormalised rather than counted per request: it appears on every card in
+     * a grid, and an aggregation over orders per card is a page of queries.
+     * Incremented only when an order reaches `delivered` — counting at checkout
+     * would let an abandoned payment advertise a sale that never happened.
+     */
+    soldCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     rating: {
       type: Number,
       default: 0,
@@ -93,6 +106,17 @@ const productSchema = new mongoose.Schema(
       type: Number,
       default: 0,
       min: 0,
+    },
+    /**
+     * How the stars fall, written by the review recompute.
+     *
+     * Stored rather than aggregated on read: the product page shows the bars
+     * above the reviews, and an aggregation per product is how a shop grid
+     * becomes slow.
+     */
+    ratingBreakdown: {
+      type: Object,
+      default: () => ({ 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }),
     },
     lowStockThreshold: {
       type: Number,
