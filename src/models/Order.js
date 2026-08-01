@@ -31,6 +31,14 @@ const orderItemSchema = new mongoose.Schema(
       type: Map,
       of: String,
     },
+    /**
+     * Which variant row this line drew from, in canonical form.
+     *
+     * Recorded so a cancellation can return the stock to the counter it came
+     * from. selectedSpecs alone would work only while the listing's options are
+     * unchanged, and a supplier renaming "Matt" to "Matte" would strand it.
+     */
+    skuKey: { type: String, trim: true },
   },
   { _id: false }
 );

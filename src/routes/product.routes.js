@@ -16,6 +16,12 @@ import {
   createProductReview,
   deleteProductReview,
 } from '../controllers/productReview.controller.js';
+import {
+  listQuestions,
+  askQuestion,
+  answerQuestion,
+  deleteQuestion,
+} from '../controllers/productQuestion.controller.js';
 import { protect, optionalAuth, restrictTo } from '../middleware/auth.js';
 import { uploadMultiple, resizeImage } from '../middleware/upload.js';
 import validate from '../middleware/validate.js';
@@ -100,6 +106,46 @@ router.delete(
   deleteProductReview
 );
 
+// ── Questions about a listing ────────────────────────────────────────────────
+// Before /:id, so "questions" is never read as part of a product id.
+router.get(
+  '/:id/questions',
+  [param('id').isMongoId().withMessage('Invalid product ID')],
+  validate,
+  listQuestions
+);
+router.post(
+  '/:id/questions',
+  protect,
+  [
+    param('id').isMongoId().withMessage('Invalid product ID'),
+    body('body').notEmpty().withMessage('A question is required').isString().trim().isLength({ max: 500 }),
+  ],
+  validate,
+  askQuestion
+);
+router.post(
+  '/:id/questions/:questionId/answers',
+  protect,
+  [
+    param('id').isMongoId().withMessage('Invalid product ID'),
+    param('questionId').isMongoId().withMessage('Invalid question ID'),
+    body('body').notEmpty().withMessage('An answer is required').isString().trim().isLength({ max: 1000 }),
+  ],
+  validate,
+  answerQuestion
+);
+router.delete(
+  '/:id/questions/:questionId',
+  protect,
+  [
+    param('id').isMongoId().withMessage('Invalid product ID'),
+    param('questionId').isMongoId().withMessage('Invalid question ID'),
+  ],
+  validate,
+  deleteQuestion
+);
+
 // ── GET /api/v1/products/:id ──────────────────────────────────────────────────
 router.get(
   '/:id',
@@ -127,6 +173,17 @@ router.post(
     body('images.*').optional().isURL().withMessage('Each image must be a valid URL'),
     body('specs').optional().isObject().withMessage('specs must be an object'),
     body('lowStockThreshold').optional().isInt({ min: 0 }).withMessage('lowStockThreshold must be a non-negative integer'),
+    body('sku').optional().isString().trim().isLength({ max: 60 }),
+    body('barcode').optional().isString().trim().isLength({ max: 40 }),
+    body('weightKg').optional().isFloat({ min: 0 }),
+    body('variantOptions').optional().isArray(),
+    body('skus').optional().isArray(),
+    body('priceTiers').optional().isArray(),
+    body('returnWindowDays').optional({ nullable: true }).isInt({ min: 0 }),
+    body('warrantyMonths').optional({ nullable: true }).isInt({ min: 0 }),
+    body('freeShippingOver').optional({ nullable: true }).isFloat({ min: 0 }),
+    body('relatedIds').optional().isArray({ max: 12 }),
+    body('relatedIds.*').optional().isMongoId(),
   ],
   validate,
   create
@@ -151,6 +208,17 @@ router.patch(
     body('images').optional().isArray(),
     body('specs').optional().isObject(),
     body('lowStockThreshold').optional().isInt({ min: 0 }).withMessage('lowStockThreshold must be a non-negative integer'),
+    body('sku').optional().isString().trim().isLength({ max: 60 }),
+    body('barcode').optional().isString().trim().isLength({ max: 40 }),
+    body('weightKg').optional().isFloat({ min: 0 }),
+    body('variantOptions').optional().isArray(),
+    body('skus').optional().isArray(),
+    body('priceTiers').optional().isArray(),
+    body('returnWindowDays').optional({ nullable: true }).isInt({ min: 0 }),
+    body('warrantyMonths').optional({ nullable: true }).isInt({ min: 0 }),
+    body('freeShippingOver').optional({ nullable: true }).isFloat({ min: 0 }),
+    body('relatedIds').optional().isArray({ max: 12 }),
+    body('relatedIds.*').optional().isMongoId(),
   ],
   validate,
   update

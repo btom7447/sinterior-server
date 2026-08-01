@@ -6,6 +6,7 @@ import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
+import { priceLine, skuKeyFor } from '../config/pricing.js';
 
 /**
  * Normalize specs to the canonical { key: [values] } format.
@@ -30,6 +31,55 @@ function normalizeSpecs(raw) {
     }
   }
   return out;
+}
+
+/**
+ * Canonicalise the purchasable rows a supplier sent.
+ *
+ * The key is computed here and never taken from the client: it is what stock
+ * decrements match on, so a hand-written or stale key would decrement the wrong
+ * counter — or nothing at all, and oversell.
+ *
+ * Rows without options, without a price, or duplicating a combination already
+ * seen are dropped rather than stored. Two rows with the same key would race
+ * each other on every order.
+ */
+function normalizeSkus(raw) {
+  if (!Array.isArray(raw)) return undefined;
+
+  const seen = new Set();
+  const rows = [];
+
+  for (const row of raw) {
+    const options = row?.options;
+    if (!options || typeof options !== 'object') continue;
+
+    const key = skuKeyFor(options);
+    if (!key || seen.has(key)) continue;
+
+    const price = Number(row.price);
+    if (!Number.isFinite(price) || price < 0) continue;
+
+    seen.add(key);
+    rows.push({
+      key,
+      options,
+      price,
+      quantity: Math.max(0, parseInt(row.quantity, 10) || 0),
+      sku: typeof row.sku === 'string' ? row.sku.trim() : undefined,
+      image: typeof row.image === 'string' ? row.image.trim() : undefined,
+    });
+  }
+  return rows;
+}
+
+/** Bulk tiers, cleaned and ordered. Nonsense is dropped, not stored. */
+function normalizeTiers(raw) {
+  if (!Array.isArray(raw)) return undefined;
+  return raw
+    .map((t) => ({ minQty: parseInt(t?.minQty, 10), price: Number(t?.price) }))
+    .filter((t) => Number.isFinite(t.minQty) && t.minQty >= 1 && Number.isFinite(t.price) && t.price >= 0)
+    .sort((a, b) => a.minQty - b.minQty);
 }
 
 // ── GET /api/v1/products ──────────────────────────────────────────────────────
@@ -177,7 +227,12 @@ export const create = asyncHandler(async (req, res) => {
     throw new AppError('Supplier profile not found.', 404);
   }
 
-  const { name, description, category, subcategory, price, compareAtPrice, unit, quantity, specs, images, lowStockThreshold } = req.body;
+  const {
+    name, description, category, subcategory, price, compareAtPrice, unit, quantity,
+    specs, images, lowStockThreshold, sku, barcode, weightKg, dimensionsCm,
+    variantOptions, skus, priceTiers, returnWindowDays, warrantyMonths,
+    freeShippingOver, relatedIds,
+  } = req.body;
 
   const qty = Math.max(0, parseInt(quantity, 10) || 1);
   const product = await Product.create({
@@ -197,6 +252,17 @@ export const create = asyncHandler(async (req, res) => {
     specs: normalizeSpecs(specs) || {},
     images: images || [],
     lowStockThreshold: lowStockThreshold !== undefined ? parseInt(lowStockThreshold, 10) : 20,
+    sku,
+    barcode,
+    weightKg,
+    dimensionsCm,
+    variantOptions: Array.isArray(variantOptions) ? variantOptions : undefined,
+    skus: normalizeSkus(skus),
+    priceTiers: normalizeTiers(priceTiers),
+    returnWindowDays,
+    warrantyMonths,
+    freeShippingOver,
+    relatedIds: Array.isArray(relatedIds) ? relatedIds : undefined,
   });
 
   sendSuccess(res, { product }, 'Product created.', 201);
@@ -219,7 +285,12 @@ export const update = asyncHandler(async (req, res) => {
     throw new AppError('You are not authorised to update this product.', 403);
   }
 
-  const ALLOWED = ['name', 'description', 'category', 'subcategory', 'price', 'compareAtPrice', 'unit', 'quantity', 'images', 'inStock', 'specs', 'lowStockThreshold'];
+  const ALLOWED = [
+    'name', 'description', 'category', 'subcategory', 'price', 'compareAtPrice',
+    'unit', 'quantity', 'images', 'inStock', 'specs', 'lowStockThreshold',
+    'sku', 'barcode', 'weightKg', 'dimensionsCm', 'variantOptions', 'skus',
+    'priceTiers', 'returnWindowDays', 'warrantyMonths', 'freeShippingOver', 'relatedIds',
+  ];
   const updates = {};
   ALLOWED.forEach((field) => {
     if (req.body[field] !== undefined) updates[field] = req.body[field];
@@ -229,6 +300,11 @@ export const update = asyncHandler(async (req, res) => {
   if (updates.specs) {
     updates.specs = normalizeSpecs(updates.specs) || {};
   }
+
+  // Variant rows and bulk tiers are re-keyed and re-checked on every write, so
+  // a client cannot post a key that matches the wrong counter.
+  if (updates.skus !== undefined) updates.skus = normalizeSkus(updates.skus) ?? [];
+  if (updates.priceTiers !== undefined) updates.priceTiers = normalizeTiers(updates.priceTiers) ?? [];
 
   /*
    * Stock and buyability are two fields that must never disagree.
@@ -286,7 +362,7 @@ export const checkStock = asyncHandler(async (req, res) => {
 
   const productIds = items.map((i) => i.productId);
   const products = await Product.find({ _id: { $in: productIds }, isActive: true }).select(
-    '_id name quantity inStock price unit'
+    '_id name quantity inStock price unit skus priceTiers'
   );
   const productMap = new Map(products.map((p) => [p._id.toString(), p]));
 
@@ -296,39 +372,44 @@ export const checkStock = asyncHandler(async (req, res) => {
       return { productId: item.productId, available: false, reason: 'Product not found or inactive' };
     }
 
-    /**
+    /*
      * The price as it stands, alongside availability.
      *
      * A cart holds whatever a product cost when it was added, which on a
      * marketplace of building materials can be weeks ago — and the order
      * endpoint re-prices from the database. Without this the shopper reads
-     * ₦9,500, taps pay, and is charged ₦10,200 with no warning. Returning it
-     * here lets the cart say so before the money moves.
+     * ₦9,500, taps pay, and is charged ₦10,200 with no warning.
+     *
+     * Priced through the same module the order uses, so the warning and the
+     * charge cannot disagree: the same variant, the same bulk tier, the same
+     * arithmetic.
      */
-    const pricing = { name: product.name, price: product.price, unit: product.unit };
+    const line = priceLine({ product, quantity: item.quantity, options: item.selectedSpecs });
+    const pricing = { name: product.name, price: line.unitPrice, unit: product.unit };
+    const stock = line.available ?? 0;
 
-    if (!product.inStock || product.quantity === 0) {
+    if (stock <= 0) {
       return {
         productId: item.productId,
         available: false,
         availableQuantity: 0,
-        reason: 'Out of stock',
+        reason: line.skuKey ? 'That option is out of stock' : 'Out of stock',
         ...pricing,
       };
     }
-    if (product.quantity < item.quantity) {
+    if (stock < item.quantity) {
       return {
         productId: item.productId,
         available: false,
-        availableQuantity: product.quantity,
-        reason: `Only ${product.quantity} available`,
+        availableQuantity: stock,
+        reason: `Only ${stock} available`,
         ...pricing,
       };
     }
     return {
       productId: item.productId,
       available: true,
-      availableQuantity: product.quantity,
+      availableQuantity: stock,
       ...pricing,
     };
   });

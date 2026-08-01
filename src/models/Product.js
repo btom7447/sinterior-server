@@ -118,6 +118,84 @@ const productSchema = new mongoose.Schema(
       type: Object,
       default: () => ({ 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }),
     },
+    // ── Identity ──────────────────────────────────────────────────────────
+    /** The supplier's own code. Buyers use it to check they have the right thing. */
+    sku: { type: String, trim: true, maxlength: 60 },
+    barcode: { type: String, trim: true, maxlength: 40 },
+
+    // ── What it physically is ─────────────────────────────────────────────
+    // Not cosmetic on a materials marketplace: a ton of granite and a bag of
+    // cement have nothing in common logistically, and this is what would let
+    // delivery ever be computed rather than guessed.
+    weightKg: { type: Number, min: 0 },
+    dimensionsCm: {
+      length: { type: Number, min: 0 },
+      width: { type: Number, min: 0 },
+      height: { type: Number, min: 0 },
+    },
+
+    // ── Variants ──────────────────────────────────────────────────────────
+    /**
+     * The axes a buyer chooses along, for building the selector.
+     * e.g. [{ name: 'Size', values: ['600x600', '300x600'] }]
+     */
+    variantOptions: [
+      {
+        _id: false,
+        name: { type: String, trim: true, maxlength: 40 },
+        values: { type: [String], default: [] },
+      },
+    ],
+    /**
+     * The purchasable rows. One per combination that actually exists, each with
+     * its own price and its own stock.
+     *
+     * Prices are absolute rather than deltas: a "+₦500 for the large one"
+     * compounds unpredictably against a bulk tier, and nobody — supplier or
+     * buyer — can work out what they will be charged.
+     *
+     * `key` is the canonical sorted form (see config/pricing.js). Sorting is
+     * what makes { Size, Finish } and { Finish, Size } the same row; without it
+     * two identical orders decrement two different counters.
+     */
+    skus: [
+      {
+        _id: false,
+        key: { type: String, trim: true, required: true },
+        options: { type: Map, of: String, default: {} },
+        price: { type: Number, min: 0, required: true },
+        quantity: { type: Number, min: 0, default: 0 },
+        sku: { type: String, trim: true, maxlength: 60 },
+        image: { type: String, trim: true },
+      },
+    ],
+
+    // ── Bulk pricing ──────────────────────────────────────────────────────
+    /**
+     * "This price from this quantity upward." The descriptions already promise
+     * trade prices on bulk; this is what lets the shop actually charge them.
+     */
+    priceTiers: [
+      {
+        _id: false,
+        minQty: { type: Number, min: 1, required: true },
+        price: { type: Number, min: 0, required: true },
+      },
+    ],
+
+    // ── After the sale ────────────────────────────────────────────────────
+    returnWindowDays: { type: Number, min: 0, default: null },
+    warrantyMonths: { type: Number, min: 0, default: null },
+    /** Order value above which this supplier ships this item free. */
+    freeShippingOver: { type: Number, min: 0, default: null },
+
+    /**
+     * Things worth buying at the same time — cement wants sand and granite.
+     * Curated by the supplier rather than inferred, because there is not yet
+     * enough order history to infer anything honest from.
+     */
+    relatedIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Product' }],
+
     lowStockThreshold: {
       type: Number,
       min: [0, 'Low stock threshold cannot be negative'],

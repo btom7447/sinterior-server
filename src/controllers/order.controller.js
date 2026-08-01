@@ -10,6 +10,7 @@ import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import { emitNotification } from '../utils/emitNotification.js';
 import { isSameRef, refId } from '../utils/refId.js';
+import { anyStock, priceLine } from '../config/pricing.js';
 import { sendEmailSafe } from '../utils/sendEmail.js';
 import { releaseEscrow, accrueCodFee } from '../services/wallet.service.js';
 import PlatformSetting from '../models/PlatformSetting.js';
@@ -77,14 +78,25 @@ export const create = asyncHandler(async (req, res) => {
     if (!quantity || quantity < 1) {
       throw new AppError(`Invalid quantity for product "${product.name}".`, 400);
     }
-    // Check stock
-    if (product.quantity !== undefined && product.quantity < quantity) {
-      throw new AppError(`Insufficient stock for "${product.name}". Available: ${product.quantity}.`, 400);
-    }
-    const priceAtOrder = product.price;
-    totalAmount += priceAtOrder * quantity;
+    /*
+     * Price the line through the one module that knows how.
+     *
+     * The base price is no longer the whole answer: a chosen variant has its
+     * own price and its own stock, and a bulk tier can cut both. Resolving that
+     * anywhere but config/pricing.js means two places that can disagree about
+     * what somebody owes.
+     */
+    const line = priceLine({ product, quantity, options: item.selectedSpecs });
 
-    // Carry buyer's spec selections (e.g. { Color: "Red", Size: "Large" })
+    if (line.available !== undefined && line.available < quantity) {
+      const what = line.skuKey ? `"${product.name}" in that option` : `"${product.name}"`;
+      throw new AppError(`Insufficient stock for ${what}. Available: ${line.available}.`, 400);
+    }
+
+    totalAmount += line.unitPrice * quantity;
+
+    // The chosen options are recorded as given, so the order says which of the
+    // variants was bought even after the listing changes.
     const selectedSpecs =
       item.selectedSpecs && typeof item.selectedSpecs === 'object' && Object.keys(item.selectedSpecs).length > 0
         ? item.selectedSpecs
@@ -95,24 +107,45 @@ export const create = asyncHandler(async (req, res) => {
       supplierId: product.supplierId,
       name: product.name,
       quantity,
-      priceAtOrder,
+      priceAtOrder: line.unitPrice,
+      skuKey: line.skuKey ?? undefined,
       ...(selectedSpecs ? { selectedSpecs } : {}),
     };
   });
 
   // Atomically decrement stock for each product
   for (const item of enrichedItems) {
-    const result = await Product.findOneAndUpdate(
-      { _id: item.productId, quantity: { $gte: item.quantity } },
-      { $inc: { quantity: -item.quantity } },
-      { new: true }
-    );
+    /*
+     * A variant draws from its own counter, not the product's. Decrementing the
+     * wrong one oversells that variant and strands the rest, and the guard has
+     * to sit in the query rather than in a read-then-write — two buyers taking
+     * the last four bags a second apart would otherwise both succeed.
+     */
+    const claim = item.skuKey
+      ? {
+          filter: {
+            _id: item.productId,
+            skus: { $elemMatch: { key: item.skuKey, quantity: { $gte: item.quantity } } },
+          },
+          update: { $inc: { 'skus.$[row].quantity': -item.quantity } },
+          options: { new: true, arrayFilters: [{ 'row.key': item.skuKey }] },
+        }
+      : {
+          filter: { _id: item.productId, quantity: { $gte: item.quantity } },
+          update: { $inc: { quantity: -item.quantity } },
+          options: { new: true },
+        };
+
+    const result = await Product.findOneAndUpdate(claim.filter, claim.update, claim.options);
     if (!result) {
       throw new AppError(`Product "${item.name}" is no longer available in the requested quantity.`, 400);
     }
-    // Update inStock flag
-    if (result.quantity === 0) {
-      result.inStock = false;
+
+    // inStock covers the whole listing, so a product with variants is only out
+    // when every one of them is — one sold-out colour must not hide the others.
+    const stillSellable = anyStock(result);
+    if (result.inStock !== stillSellable) {
+      result.inStock = stillSellable;
       await result.save();
     }
 
