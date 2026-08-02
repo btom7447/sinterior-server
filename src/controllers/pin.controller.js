@@ -286,6 +286,52 @@ export const getFeed = asyncHandler(async (req, res) => {
   });
 });
 
+// ── GET /pins/mine ────────────────────────────────────────────────────────────
+/**
+ * Everything the signed-in author has posted, drafts included.
+ *
+ * Separate from the feed rather than a flag on it, because the two answer
+ * different questions. The feed is what the world should see: active pins only,
+ * ranked. This is what the author has, in the order they made it, including the
+ * drafts and the hidden ones — a management screen that cannot show you the
+ * draft you saved yesterday is a management screen with a hole in it.
+ *
+ * Removed pins stay out. They are tombstones kept so save counters on other
+ * people's boards do not go negative, not something to offer back for editing.
+ */
+export const getMyPins = asyncHandler(async (req, res) => {
+  const profile = await Profile.findOne({ userId: req.user.id }).select('_id');
+  if (!profile) throw new AppError('Profile not found.', 404);
+
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+
+  const filter = { author: profile._id, status: { $ne: 'removed' } };
+
+  const [pins, total] = await Promise.all([
+    Pin.find(filter)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean(),
+    Pin.countDocuments(filter),
+  ]);
+
+  res.status(200).json({
+    success: true,
+    data: {
+      pins: pins.map((p) => ({
+        ...p,
+        mediaUrl: resolveUploadUrl(p.mediaUrl),
+        posterUrl: p.posterUrl ? resolveUploadUrl(p.posterUrl) : undefined,
+        media: resolvePinAlbum(p.media),
+      })),
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    },
+    message: 'Your pins retrieved.',
+  });
+});
+
 // ── GET /pins/:id ─────────────────────────────────────────────────────────────
 export const getPin = asyncHandler(async (req, res) => {
   const pin = await Pin.findById(req.params.id).populate('author', 'fullName avatarUrl role city state');

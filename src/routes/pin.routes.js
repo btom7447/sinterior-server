@@ -5,6 +5,7 @@ import {
   getTaxonomy,
   getTradeCovers,
   getFeed,
+  getMyPins,
   getPin,
   createPin,
   uploadPinMedia,
@@ -37,6 +38,8 @@ const router = Router();
 router.get('/taxonomy', getTaxonomy);
 router.get('/taxonomy/covers', getTradeCovers); // real imagery per trade      // GET /pins/taxonomy — trades/rooms/bands
 router.get('/feed', optionalAuth, getFeed); // GET /pins/feed — public, personalized when authed
+// Before /:id, or "mine" is read as a pin id. Drafts included — see the controller.
+router.get('/mine', protect, getMyPins);
 // Comments read publicly; the literal path must beat the /:id wildcard.
 // optionalAuth so likedByMe comes back for a signed-in reader without shutting
 // a signed-out one out of the thread.
