@@ -8,6 +8,7 @@ import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import { priceLine, skuKeyFor } from '../config/pricing.js';
 import { isValidSubcategory } from '../config/catalogue.js';
+import escapeRegex from '../utils/escapeRegex.js';
 
 /**
  * Normalize specs to the canonical { key: [values] } format.
@@ -120,9 +121,30 @@ export const list = asyncHandler(async (req, res) => {
     filter.supplierId = supplierId;
   }
 
+  /*
+   * Search matches partial words, which $text cannot.
+   *
+   * A Mongo text index tokenises on whole words, so "ceme" found nothing at all
+   * until the "nt" arrived — and on a phone, every search is a partial word
+   * until the moment it is not. Typing into a box that stays empty reads as an
+   * empty shop rather than an unfinished word.
+   *
+   * A regex across the fields people actually type — the name, the brand, the
+   * category — matches from the first letter. Escaped, because a stray "(" in
+   * a query would otherwise be an invalid pattern and a 500.
+   *
+   * This trades the text index for a scan. Correct at this catalogue's size and
+   * the wrong answer at ten thousand listings, where the fix is Atlas Search
+   * rather than a cleverer regex.
+   */
   if (search) {
-    // Use MongoDB full-text search if the text index is present
-    filter.$text = { $search: search };
+    const needle = new RegExp(escapeRegex(String(search).trim()), 'i');
+    filter.$or = [
+      { name: needle },
+      { brand: needle },
+      { category: needle },
+      { subcategory: needle },
+    ];
   }
 
   /*
@@ -139,7 +161,13 @@ export const list = asyncHandler(async (req, res) => {
     rating: { rating: -1, reviewCount: -1 },
     popular: { soldCount: -1, createdAt: -1 },
   };
-  const order = search ? { score: { $meta: 'textScore' } } : SORTS[sort] ?? SORTS.newest;
+  /*
+   * Without a text score there is nothing to rank by, so a search falls back to
+   * what has actually sold. "Popular thing matching your word" is a better
+   * default than "newest thing matching your word" — and an explicit sort still
+   * wins, because somebody who asked for cheapest-first meant it.
+   */
+  const order = SORTS[sort] ?? (search ? SORTS.popular : SORTS.newest);
 
   const [total, products] = await Promise.all([
     Product.countDocuments(filter),
