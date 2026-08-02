@@ -1,3 +1,4 @@
+import Category from '../models/Category.js';
 import Product from '../models/Product.js';
 import Profile from '../models/Profile.js';
 import SavedProduct from '../models/SavedProduct.js';
@@ -7,7 +8,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
 import { priceLine, skuKeyFor } from '../config/pricing.js';
-import { isValidSubcategory } from '../config/catalogue.js';
+import { isValidSubcategory } from '../services/catalogue.service.js';
 import escapeRegex from '../utils/escapeRegex.js';
 
 /**
@@ -223,7 +224,7 @@ export const facets = asyncHandler(async (req, res) => {
   const match = { isActive: true };
   if (req.query.category) match.category = req.query.category;
 
-  const [subcategories, brands, categories] = await Promise.all([
+  const [subcategories, brands, categories, shelves] = await Promise.all([
     Product.aggregate([
       { $match: { ...match, subcategory: { $nin: [null, ''] } } },
       { $group: { _id: '$subcategory', count: { $sum: 1 } } },
@@ -242,8 +243,8 @@ export const facets = asyncHandler(async (req, res) => {
      * Temu, Jumia, Konga — puts a real product photograph there instead,
      * because the thing itself is more recognisable than any icon of it.
      *
-     * Best-selling first, so the picture is of something representative rather
-     * than of whatever happened to be listed last.
+     * Best-selling first, so the borrowed picture is of something
+     * representative rather than of whatever happened to be listed last.
      */
     Product.aggregate([
       { $match: { isActive: true } },
@@ -257,6 +258,7 @@ export const facets = asyncHandler(async (req, res) => {
       },
       { $sort: { count: -1 } },
     ]),
+    Category.find({ isActive: true }).select('name image order').sort({ order: 1, name: 1 }).lean(),
   ]);
 
   const shape = (rows) =>
@@ -264,10 +266,33 @@ export const facets = asyncHandler(async (req, res) => {
       .filter((r) => r._id)
       .map((r) => ({ value: r._id, count: r.count, ...(r.image ? { image: r.image } : {}) }));
 
+  /*
+   * An admin's own artwork wins over a borrowed product photograph.
+   *
+   * Borrowing was always a stopgap: the shelf ended up illustrated by one bag of
+   * one supplier's cement, which is both arbitrary and unfair to every other
+   * supplier on it. Where an admin has set a picture we use theirs; where they
+   * have not, the best-selling listing still stands in, so the rail never
+   * regresses to glyphs while the artwork is being collected.
+   *
+   * Ordered by the admin's arrangement, and shelves with nothing on them yet are
+   * included — a new category that stayed invisible until its first listing
+   * would look like the create button had failed.
+   */
+  const counted = new Map(categories.filter((c) => c._id).map((c) => [c._id, c]));
+
+  const merged = shelves.length
+    ? shelves.map((shelf) => {
+        const row = counted.get(shelf.name);
+        const image = shelf.image || row?.image;
+        return { value: shelf.name, count: row?.count ?? 0, ...(image ? { image } : {}) };
+      })
+    : shape(categories);
+
   sendSuccess(
     res,
     {
-      categories: shape(categories),
+      categories: merged,
       subcategories: shape(subcategories),
       brands: shape(brands),
     },
@@ -434,14 +459,20 @@ export const create = asyncHandler(async (req, res) => {
   } = req.body;
 
   const qty = Math.max(0, parseInt(quantity, 10) || 1);
+
+  // Filed only under a subcategory that belongs to the category, so a filter
+  // over the fixed vocabulary cannot miss it. Read from the catalogue an admin
+  // maintains rather than a constant, hence the await.
+  const filedUnder = (await isValidSubcategory(category, subcategory))
+    ? subcategory || undefined
+    : undefined;
+
   const product = await Product.create({
     supplierId: profile._id,
     name,
     description,
     category,
-    // Filed only under a subcategory that belongs to the category, so a filter
-    // over the fixed vocabulary cannot miss it.
-    subcategory: isValidSubcategory(category, subcategory) ? subcategory || undefined : undefined,
+    subcategory: filedUnder,
     brand: brand || undefined,
     price,
     // Only kept when it is genuinely higher; a "was" price at or below the
@@ -506,7 +537,7 @@ export const update = asyncHandler(async (req, res) => {
   // stored, or the second-level rail would offer a filter matching nothing.
   if (updates.subcategory !== undefined) {
     const category = updates.category ?? product.category;
-    if (!isValidSubcategory(category, updates.subcategory)) updates.subcategory = undefined;
+    if (!(await isValidSubcategory(category, updates.subcategory))) updates.subcategory = undefined;
   }
 
   // Normalize specs to array-of-values format

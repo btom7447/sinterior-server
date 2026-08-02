@@ -4,6 +4,41 @@ _Platform-canonical decision log — other repos reference this file._
 
 _Newest first. Every entry: date · decision · why · what it forecloses._
 
+## 2026-08-02 — The category list is data an admin owns, not a constant in three files
+
+Categories were a hardcoded array in the server config, a second array in the
+mobile app, and an enum on the Product schema — three copies of one list, so
+adding a shelf meant a server deploy, a store release, and a schema change, and
+whichever copy was missed rejected products at save time. They are now a
+`Category` collection with a name, its own artwork, embedded subcategories and
+an explicit order, edited at `/admin/categories`.
+
+The consequences are the design. **Renaming carries the listings**: products
+store the category as a string, so the rename runs an updateMany in the same
+request — without it the listings stay filed under a shelf that no longer
+exists, still saleable, invisible, and reporting no error anywhere. **Hiding
+never deletes**: a removed row would orphan every product on it, so retiring a
+shelf sets `isActive: false` and reports how many listings just left the shop.
+**Dropping a subcategory unfiles rather than orphans** — the listing stays, it
+loses the second level.
+
+Categories carry their own photograph now. The rail used to borrow one from
+whichever listing sold best, which meant "Cement" was a picture of one
+supplier's bag, advertised at every other supplier's expense; a borrowed photo
+still stands in where no artwork has been set, so the rail never regresses to
+glyphs mid-collection.
+
+The vocabulary stays closed — free text produces "Tiles", "tiles" and "Tles"
+inside a week and a filter over them matches one of three — so the Product
+schema validates against the live catalogue through a 60-second cache rather
+than an enum. The old static list survives as the fallback for an unseeded
+database and for a catalogue read that fails, which is why an empty collection
+does not mean "no category is valid".
+
+Forecloses: no category list compiled into a client. The arrays that remain in
+the mobile app and `config/catalogue.js` are the opening hand and the fallback,
+never the authority.
+
 ## 2026-08-01 — All line pricing resolves in config/pricing.js, and nowhere else
 
 Three things can decide what one line costs: the base price, the variant chosen,

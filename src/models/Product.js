@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { resolveImageUrls } from '../utils/resolveUrl.js';
 import { syncProductPin, removePinsForSource } from '../services/pinSync.service.js';
+import { isValidCategory } from '../services/catalogue.service.js';
 
 const productSchema = new mongoose.Schema(
   {
@@ -24,14 +25,22 @@ const productSchema = new mongoose.Schema(
       type: String,
       trim: true,
       required: [true, 'Category is required'],
-      enum: {
-        values: [
-          'Lightings & Electrical', 'Panels', 'Wallpaper', 'Doors', 'Walls',
-          'Cement', 'Steel & Iron', 'Tiles & Flooring', 'Paints', 'Roofing & Ceiling',
-          'Smart Home', 'Furniture', 'Plumbing', 'Aggregates', 'Wood & Timber',
-          'Automobile', 'Laundromat',
-        ],
-        message: '{VALUE} is not a valid category',
+      /*
+       * Checked against the catalogue an admin maintains, not a frozen list.
+       *
+       * This was an enum of seventeen strings — fifteen the shop used and two
+       * ("Automobile", "Laundromat") that nothing ever did. Now that categories
+       * are records an admin can create, an enum would mean every new shelf
+       * rejected the first product filed on it, with an error naming a category
+       * the admin could see on their own screen.
+       *
+       * Still a closed vocabulary: free text produces "Tiles", "tiles" and
+       * "Tles" inside a week, and a filter over them matches one of the three.
+       * The validator reads a cached list, so it is not a query per save.
+       */
+      validate: {
+        validator: (value) => isValidCategory(value),
+        message: '{VALUE} is not a category this shop offers',
       },
     },
     subcategory: {
