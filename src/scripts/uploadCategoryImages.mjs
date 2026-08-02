@@ -50,7 +50,15 @@ const ALIASES = {
   electrical: 'Lightings & Electrical',
   wood: 'Wood & Timber',
   timber: 'Wood & Timber',
+  woodtimber: 'Wood & Timber',
   smarthome: 'Smart Home',
+  door: 'Doors',
+  panel: 'Panels',
+  wall: 'Walls',
+  // POP — plaster of Paris — is what a finished wall is called on every site in
+  // the country, and it is the first subcategory under Walls.
+  pop: 'Walls',
+  popscreeding: 'Walls',
 };
 
 const slug = (value) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
