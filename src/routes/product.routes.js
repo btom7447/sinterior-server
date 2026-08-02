@@ -52,7 +52,9 @@ router.get(
 // ── Browse helpers ───────────────────────────────────────────────────────────
 // Both before /:id, so neither word is read as a product id.
 router.get('/facets', facets);
-router.get('/sections', sections);
+// optionalAuth so the cards on it can draw a filled heart. Without it the shop's
+// own default view is the one screen where saving never appears to work.
+router.get('/sections', optionalAuth, sections);
 
 // ── POST /api/v1/products/upload-images ──────────────────────────────────────
 router.post(

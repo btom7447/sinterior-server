@@ -293,7 +293,24 @@ export const sections = asyncHandler(async (req, res) => {
     { $sort: { total: -1 } },
   ]);
 
-  sendSuccess(res, { sections: rows }, 'Sections retrieved.');
+  /*
+   * Mark what the viewer has saved.
+   *
+   * The aggregation builds its own objects, so it bypasses the shaping every
+   * other product route goes through — which meant the shop's default view was
+   * the one screen where a heart never filled in. Flagged in one query across
+   * every section rather than one per section.
+   */
+  const flat = rows.flatMap((r) => r.products);
+  const flagged = await withSavedFlag(req, flat);
+  const savedById = new Map(flagged.map((p) => [String(p._id), p.savedByMe]));
+
+  const shaped = rows.map((r) => ({
+    ...r,
+    products: r.products.map((p) => ({ ...p, savedByMe: savedById.get(String(p._id)) ?? false })),
+  }));
+
+  sendSuccess(res, { sections: shaped }, 'Sections retrieved.');
 });
 
 // ── GET /api/v1/products/:id ──────────────────────────────────────────────────
