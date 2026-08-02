@@ -158,7 +158,7 @@ export const getShippingRates = asyncHandler(async (req, res) => {
   }
 
   const supplier = await SupplierProfile.findOne({ profileId: profileDoc._id }).select(
-    'shippingRates courierServices'
+    'shippingRates courierServices minOrderValue deliveryDays'
   );
 
   sendSuccess(
@@ -166,6 +166,16 @@ export const getShippingRates = asyncHandler(async (req, res) => {
     {
       shippingRates: supplier?.shippingRates || {},
       courierServices: supplier?.courierServices || [],
+      /*
+       * The two facts that belong beside a rate, and were reachable only from
+       * the product detail route.
+       *
+       * Checkout needs them per supplier: a cart from two suppliers has two
+       * minimums and two lead times, and the buyer discovering either after
+       * paying is the discovery that stops the second order.
+       */
+      minOrderValue: supplier?.minOrderValue ?? null,
+      leadTime: supplier?.deliveryDays ?? null,
     },
     'Shipping rates retrieved.'
   );
