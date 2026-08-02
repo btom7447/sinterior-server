@@ -90,6 +90,29 @@ export const creditEscrow = async ({ sellerProfileId, amount, referenceId, sourc
   });
 };
 
+/**
+ * The buyer got their money back before the escrow was ever released.
+ *
+ * creditEscrow grows pendingBalance the moment a payment lands, so a held entry
+ * is already sitting in the seller's "in escrow" figure. Refunding one without
+ * this leaves that credit behind forever: the entry is marked refunded and
+ * disappears from the escrow list, while the balance it created stays on the
+ * seller's earnings screen permanently, never released and never removed.
+ *
+ * Not withdrawable — pending only becomes available through a release — so
+ * nothing can be taken that should not be. It is a number that is simply wrong,
+ * and grows wronger with every refund.
+ */
+export const reverseEscrowCredit = async ({ sellerProfileId, amount, referenceId, reason }) => {
+  const wallet = await Wallet.findOrCreate(sellerProfileId);
+  return applyDelta(wallet, 'pending', -Math.abs(amount), {
+    type: 'refund_out',
+    source: 'refund',
+    referenceId,
+    description: reason || 'Refunded before release',
+  });
+};
+
 // Release condition met. Computes fee, moves pending → holding (with availableAt timer),
 // records platform fee in either platform wallet (per_transaction) or seller's feesOwed (scheduled).
 export const releaseEscrow = async ({ sellerProfileId, amount, source, referenceId }) => {

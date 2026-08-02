@@ -8,9 +8,9 @@
  */
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
-import Profile from './src/models/Profile.js';
-import Wallet from './src/models/Wallet.js';
-import WalletTransaction from './src/models/WalletTransaction.js';
+import Profile from '../models/Profile.js';
+import Wallet from '../models/Wallet.js';
+import WalletTransaction from '../models/WalletTransaction.js';
 import { runExpireHoldPeriod } from './src/jobs/expireHoldPeriod.js';
 
 dotenv.config({ path: '.env.local', override: true });

@@ -10,7 +10,12 @@ import Notification from '../models/Notification.js';
 import Profile from '../models/Profile.js';
 import AppError from '../utils/AppError.js';
 import { refundCharge } from '../utils/paystack.js';
-import { refundFromSeller, reversePayout } from './wallet.service.js';
+import {
+  creditEscrow,
+  refundFromSeller,
+  reverseEscrowCredit,
+  reversePayout,
+} from './wallet.service.js';
 
 export const issueRefund = async ({ escrowEntryId, amount, reason, adminUserId }) => {
   const entry = await EscrowEntry.findById(escrowEntryId);
@@ -37,8 +42,23 @@ export const issueRefund = async ({ escrowEntryId, amount, reason, adminUserId }
       reason: reason || 'Admin refund (post-release)',
     });
     walletDebited = true;
+  } else if (entry.status === 'held') {
+    /*
+     * Still held, but the credit was made at payment time.
+     *
+     * creditEscrow grows pendingBalance the moment the charge lands, so this
+     * amount is already on the seller's earnings screen. Doing nothing here
+     * left it there permanently — the entry vanished from escrow and the
+     * balance it created never did.
+     */
+    await reverseEscrowCredit({
+      sellerProfileId: entry.sellerProfileId,
+      amount: refundAmount,
+      referenceId: entry._id,
+      reason: reason || 'Admin refund (pre-release)',
+    });
+    walletDebited = true;
   }
-  // If still held, money is in our balance — no seller debit needed.
 
   // 2. Fire Paystack refund (returns to buyer's card). If this fails, we must
   //    reverse the wallet debit so the seller isn't out money for a refund the
@@ -54,11 +74,23 @@ export const issueRefund = async ({ escrowEntryId, amount, reason, adminUserId }
       if (walletDebited) {
         // Best-effort rollback. Use reversePayout-style credit back to available.
         try {
-          await reversePayout({
-            profileId: entry.sellerProfileId,
-            amount: refundAmount,
-            referenceId: entry._id,
-          });
+          // A pre-release refund took it out of pending, so it goes back to
+          // pending; reversePayout credits available, which would move money
+          // between buckets it was never in.
+          if (entry.status === 'held') {
+            await creditEscrow({
+              sellerProfileId: entry.sellerProfileId,
+              amount: refundAmount,
+              referenceId: entry._id,
+              description: 'Refund reversed — Paystack refused',
+            });
+          } else {
+            await reversePayout({
+              profileId: entry.sellerProfileId,
+              amount: refundAmount,
+              referenceId: entry._id,
+            });
+          }
         } catch (rollbackErr) {
           // If rollback also fails, log loudly — admin must fix manually.
           console.error(
