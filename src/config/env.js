@@ -50,6 +50,15 @@ const config = Object.freeze({
 
   SERVER_URL: process.env.SERVER_URL || `http://localhost:${PORT}`,
 
+  /**
+   * The mobile app's URL scheme, for handing a finished payment back to it.
+   *
+   * Must match `expo.scheme` in the app's app.json — they are one string in two
+   * repositories, and a mismatch is a buyer left in a browser after paying with
+   * nothing to tell anyone something went wrong.
+   */
+  APP_SCHEME: process.env.APP_SCHEME || 'sintheriormobile',
+
   MONGO_URI: process.env.MONGO_URI,
 
   JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET,

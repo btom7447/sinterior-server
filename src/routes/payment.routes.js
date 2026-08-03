@@ -1,6 +1,6 @@
 import express, { Router } from 'express';
 import { body, param, query } from 'express-validator';
-import { initialize, status, verify, webhook } from '../controllers/payment.controller.js';
+import { initialize, paymentReturn, status, verify, webhook } from '../controllers/payment.controller.js';
 import { protect } from '../middleware/auth.js';
 import { paymentVerifyLimiter } from '../middleware/rateLimiter.js';
 import validate from '../middleware/validate.js';
@@ -31,6 +31,11 @@ router.get(
   validate,
   status
 );
+
+// ── GET /api/v1/payments/return ──────────────────────────────────────────────
+// Public: the buyer arrives from Paystack's servers with no token. It only
+// redirects into the app — see the controller for why that is safe.
+router.get('/return', paymentReturn);
 
 router.get(
   '/verify',

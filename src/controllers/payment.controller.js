@@ -125,6 +125,46 @@ const createEscrowFor = async ({ type, entityId, paystackReference }) => {
   return [];
 };
 
+// ── GET /api/v1/payments/return ──────────────────────────────────────────────
+/**
+ * Bounce a finished app payment back into the app.
+ *
+ * Paystack will only redirect to an http(s) address, and the app answers to a
+ * custom scheme, so something has to sit between them. This is that something:
+ * it takes the redirect and immediately hands off to `sintheriormobile://`,
+ * which the in-app browser session recognises as its cue to close.
+ *
+ * Public and unauthenticated by necessity — the buyer arrives here from
+ * Paystack's servers, not from the app, and carries no token. It asserts
+ * nothing about the payment and grants nothing: the reference is passed through
+ * untouched and the app still verifies it against our own API before believing
+ * a word of it. Anyone can open this URL; all they get is a redirect.
+ *
+ * The HTML fallback matters on Android, where a browser that will not follow a
+ * custom scheme from a 302 leaves the buyer staring at a blank page after
+ * paying. A visible link is a worse outcome than an automatic close, and a much
+ * better one than a dead end.
+ */
+export const paymentReturn = asyncHandler(async (req, res) => {
+  const reference = String(req.query.reference ?? '').replace(/[^a-zA-Z0-9_-]/g, '');
+  const target = `${config.APP_SCHEME}://payment-return?reference=${encodeURIComponent(reference)}`;
+
+  res
+    .status(200)
+    .type('html')
+    .send(
+      `<!doctype html><meta charset="utf-8">` +
+        `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+        `<meta http-equiv="refresh" content="0;url=${target}">` +
+        `<title>Returning to Sintherior</title>` +
+        `<style>body{font-family:system-ui,sans-serif;display:grid;place-items:center;` +
+        `height:100vh;margin:0;text-align:center;padding:24px}a{color:#7C4DFF}</style>` +
+        `<div><p>Taking you back to Sintherior…</p>` +
+        `<p><a href="${target}">Tap here if nothing happens</a></p></div>` +
+        `<script>location.replace(${JSON.stringify(target)})</script>`
+    );
+});
+
 /**
  * POST /api/v1/payments/initialize
  * Body: { type: "order" | "job", entityId: string }
@@ -174,7 +214,22 @@ export const initialize = asyncHandler(async (req, res) => {
     throw new AppError('type must be "order" or "job".', 400);
   }
 
-  const callbackUrl = `${config.CLIENT_APP_URL}/payment/verify?reference=${reference}`;
+  /*
+   * Where Paystack sends the buyer when they are finished.
+   *
+   * On the web that is the verify page and always has been. From the app it was
+   * the same page — which left somebody who had just paid sitting in a browser
+   * on a website, with no way back to the app except closing the tab by hand
+   * and hoping the order had gone through.
+   *
+   * The app asks for a redirector instead: an https URL Paystack is happy with,
+   * which bounces straight to the app's own scheme. The browser session sees
+   * that scheme, closes itself, and the app carries on where it left off.
+   */
+  const callbackUrl =
+    req.body?.platform === 'app'
+      ? `${config.SERVER_URL}/api/v1/payments/return?reference=${reference}`
+      : `${config.CLIENT_APP_URL}/payment/verify?reference=${reference}`;
 
   const paystack = await initializeTransaction({
     email: user.email,
