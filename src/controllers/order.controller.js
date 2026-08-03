@@ -12,6 +12,7 @@ import { emitNotification } from '../utils/emitNotification.js';
 import { isSameRef, refId } from '../utils/refId.js';
 import { anyStock, priceLine } from '../config/pricing.js';
 import { sendEmailSafe } from '../utils/sendEmail.js';
+import { settledSuppliers, suppliersOn } from '../config/delivery.js';
 import { releaseEscrow, accrueCodFee } from '../services/wallet.service.js';
 import PlatformSetting from '../models/PlatformSetting.js';
 import {
@@ -501,9 +502,18 @@ export const approveDelivery = asyncHandler(async (req, res) => {
 
   const cashCollected = req.body?.cashCollected === true;
 
+  /*
+   * Every distinct supplier with a line on this order.
+   *
+   * Approval is tracked per supplier, because an order can straddle two of them
+   * and one confirming does not mean the other has shipped anything.
+   */
+  const supplierIds = suppliersOn(order.items);
+  const has = (list, id) => (list ?? []).some((entry) => isSameRef(entry, id));
+
   // Supplier-side approval — also handles pay-on-delivery cash collection.
   if (isSupplier) {
-    if (order.supplierDeliveryApproved) {
+    if (has(order.supplierApprovals, profile._id)) {
       return sendSuccess(res, { order }, 'You have already confirmed delivery.');
     }
     if (order.paymentStatus !== 'paid' && !cashCollected) {
@@ -515,16 +525,49 @@ export const approveDelivery = asyncHandler(async (req, res) => {
     if (order.paymentStatus !== 'paid' && cashCollected) {
       order.paymentStatus = 'paid';
     }
-    order.supplierDeliveryApproved = true;
+    order.supplierApprovals.push(profile._id);
   } else {
-    // Buyer-side approval — they confirm receipt.
-    if (order.buyerDeliveryApproved) {
+    /*
+     * Buyer-side approval — they confirm receipt, of one supplier's goods or of
+     * everything.
+     *
+     * Naming a supplier is what makes a split delivery honest: a buyer whose
+     * tiles arrived and whose cement has not should be able to free the tiles
+     * without signing for the cement. Omitting it confirms the lot, which is
+     * both the old behaviour and the right one for a single-supplier order.
+     */
+    const only = req.body?.supplierId;
+    if (only && !supplierIds.some((id) => isSameRef(id, only))) {
+      throw new AppError('That supplier has nothing on this order.', 400);
+    }
+
+    const confirming = only ? [only] : supplierIds;
+    const fresh = confirming.filter((id) => !has(order.buyerApprovals, id));
+    if (!fresh.length) {
       return sendSuccess(res, { order }, 'You have already confirmed receipt.');
     }
-    order.buyerDeliveryApproved = true;
+    order.buyerApprovals.push(...fresh);
   }
 
-  // Both sides approved AND payment settled → transition to delivered.
+  /*
+   * Which suppliers are now settled — confirmed by both sides.
+   *
+   * This is what decides the payout, rather than the order-level flags: escrow
+   * for a supplier releases when that supplier has said they delivered and the
+   * buyer has said it arrived, and not one moment before.
+   */
+  const settled = settledSuppliers({
+    items: order.items,
+    supplierApprovals: order.supplierApprovals,
+    buyerApprovals: order.buyerApprovals,
+  });
+
+  // The summary flags every client already reads. True only when the whole
+  // order is accounted for, which is what they have always meant.
+  order.supplierDeliveryApproved = supplierIds.every((id) => has(order.supplierApprovals, id));
+  order.buyerDeliveryApproved = supplierIds.every((id) => has(order.buyerApprovals, id));
+
+  // Delivered when every supplier is settled and the money is in.
   let transitioned = false;
   if (
     order.buyerDeliveryApproved &&
@@ -538,8 +581,48 @@ export const approveDelivery = asyncHandler(async (req, res) => {
 
   await order.save();
 
-  // On transition to delivered: release any escrow entries (online-paid orders)
-  // OR accrue COD platform fee if there's no escrow (cash-collected orders).
+  /*
+   * Escrow releases per supplier, the moment both sides have signed that
+   * supplier off — not when the whole order completes.
+   *
+   * Gating this on the order-level transition would hold a supplier who
+   * delivered hostage to a co-supplier who may never deliver, which is the
+   * mirror image of the bug it replaced. Running it on every approval is safe
+   * because each entry is claimed atomically below: a second call finds nothing
+   * still `held` and does nothing.
+   */
+  if (settled.length > 0) {
+    const heldEntries = await EscrowEntry.find({
+      entityType: 'order',
+      entityId: order._id,
+      status: 'held',
+      // Only suppliers both sides have signed off. Without this the first
+      // supplier to confirm released the whole order's escrow, paying a
+      // co-supplier who had shipped nothing.
+      sellerProfileId: { $in: settled },
+    }).select('_id');
+
+    for (const candidate of heldEntries) {
+      const entry = await EscrowEntry.findOneAndUpdate(
+        { _id: candidate._id, status: 'held' },
+        { status: 'released', releasedAt: new Date() },
+        { new: true }
+      );
+      if (!entry) continue; // claimed by a parallel call
+      const { feeAmount, netAmount } = await releaseEscrow({
+        sellerProfileId: entry.sellerProfileId,
+        amount: entry.amount,
+        source: 'order',
+        referenceId: order._id,
+      });
+      entry.feeAmount = feeAmount;
+      entry.netAmount = netAmount;
+      await entry.save();
+    }
+  }
+
+  // On full delivery: credit the sale to each listing, and — for a cash order
+  // that never had escrow — accrue the platform fee we will collect later.
   if (transitioned) {
     /*
      * Credit the sale to each listing. Delivered is the only honest moment for
@@ -556,33 +639,16 @@ export const approveDelivery = asyncHandler(async (req, res) => {
       )
     );
 
-    // Read the held entry IDs first — we'll claim each one atomically below
-    // so a duplicate transition (rare but possible) doesn't double-release.
-    const heldEntries = await EscrowEntry.find({
+    // Whether this order ever had escrow at all, rather than whether anything
+    // is still held — by now the held entries have just been released, and
+    // reading "none held" as "this was cash" would charge a COD fee on an
+    // order that was paid online.
+    const hadEscrow = await EscrowEntry.countDocuments({
       entityType: 'order',
       entityId: order._id,
-      status: 'held',
-    }).select('_id');
+    });
 
-    if (heldEntries.length > 0) {
-      for (const candidate of heldEntries) {
-        const entry = await EscrowEntry.findOneAndUpdate(
-          { _id: candidate._id, status: 'held' },
-          { status: 'released', releasedAt: new Date() },
-          { new: true }
-        );
-        if (!entry) continue; // claimed by a parallel call
-        const { feeAmount, netAmount } = await releaseEscrow({
-          sellerProfileId: entry.sellerProfileId,
-          amount: entry.amount,
-          source: 'order',
-          referenceId: order._id,
-        });
-        entry.feeAmount = feeAmount;
-        entry.netAmount = netAmount;
-        await entry.save();
-      }
-    } else {
+    if (hadEscrow === 0) {
       // COD flow — no escrow ever existed (money went buyer → supplier in cash).
       // Accrue platform fee per supplier so we can collect later.
       const supplierTotals = new Map();

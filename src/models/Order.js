@@ -136,8 +136,30 @@ const orderSchema = new mongoose.Schema(
     // order moves to `delivered`. The supplier approval also handles
     // pay-on-delivery cash collection (it sets paymentStatus to 'paid' when
     // marked).
+    /*
+     * Kept as the summary flags every client already reads: true only once
+     * EVERY supplier on the order has confirmed, and the buyer has confirmed
+     * for every supplier. On a single-supplier order — which is most of them —
+     * they behave exactly as they always did.
+     */
     buyerDeliveryApproved: { type: Boolean, default: false },
     supplierDeliveryApproved: { type: Boolean, default: false },
+
+    /**
+     * Who has confirmed what, per supplier.
+     *
+     * An order can span two suppliers, and until these existed the confirmation
+     * was one boolean for the whole thing: the first supplier to mark their
+     * half delivered flipped it, and the release loop then paid out EVERY held
+     * escrow entry on the order — including the supplier who had shipped
+     * nothing. The buyer's escrow protection on that half was gone and nobody
+     * was told.
+     *
+     * Escrow for a supplier releases only when that supplier appears in both
+     * lists. The order reaches `delivered` only when every supplier does.
+     */
+    supplierApprovals: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Profile' }],
+    buyerApprovals: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Profile' }],
     deliveredAt: { type: Date },
 
     // Reference to the first escrow entry created at payment time. Multi-supplier

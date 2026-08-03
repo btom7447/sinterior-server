@@ -30,6 +30,49 @@ const myProfile = async (userId) => {
   return profile;
 };
 
+/**
+ * Turn whatever the client sent into a stored album.
+ *
+ * Shared by create and update so a replaced photograph goes through exactly the
+ * same door as a new one — including the part that matters: a video entry
+ * carries a `videoUid`, and the playback and poster addresses are read back
+ * from Cloudflare rather than trusted from the caller. That check is the reason
+ * this is a function rather than two copies.
+ */
+async function normaliseAlbum(media) {
+  const raw = Array.isArray(media) ? media.slice(0, 10) : [];
+  const album = [];
+
+  for (const item of raw) {
+    if (!item) continue;
+
+    if (item.type === 'video' && item.videoUid) {
+      const video = await getVideo(String(item.videoUid));
+      if (!video.ready || !video.playbackUrl) {
+        throw new AppError('That video is still processing. Try again in a moment.', 409);
+      }
+      album.push({
+        type: 'video',
+        url: video.playbackUrl,
+        posterUrl: video.posterUrl ?? undefined,
+        aspectRatio: typeof item.aspectRatio === 'number' ? item.aspectRatio : 1,
+      });
+      continue;
+    }
+
+    if (typeof item.url === 'string' && item.url.trim()) {
+      album.push({
+        type: 'image',
+        url: item.url.trim(),
+        posterUrl: item.posterUrl,
+        aspectRatio: typeof item.aspectRatio === 'number' ? item.aspectRatio : 1,
+      });
+    }
+  }
+
+  return album;
+}
+
 // ── GET /pins/taxonomy ────────────────────────────────────────────────────────
 export const getTaxonomy = asyncHandler(async (_req, res) => {
   res.status(200).json({
@@ -518,35 +561,7 @@ export const createPin = asyncHandler(async (req, res) => {
   // addresses are read back from Cloudflare rather than trusted from the
   // client, so a caller cannot point a "video" at an arbitrary URL, and a pin
   // cannot be created for a video that failed to transcode.
-  const raw = Array.isArray(req.body.media) ? req.body.media.slice(0, 10) : [];
-  const album = [];
-
-  for (const item of raw) {
-    if (!item) continue;
-
-    if (item.type === 'video' && item.videoUid) {
-      const video = await getVideo(String(item.videoUid));
-      if (!video.ready || !video.playbackUrl) {
-        throw new AppError('That video is still processing. Try again in a moment.', 409);
-      }
-      album.push({
-        type: 'video',
-        url: video.playbackUrl,
-        posterUrl: video.posterUrl ?? undefined,
-        aspectRatio: typeof item.aspectRatio === 'number' ? item.aspectRatio : 1,
-      });
-      continue;
-    }
-
-    if (typeof item.url === 'string' && item.url.trim()) {
-      album.push({
-        type: 'image',
-        url: item.url.trim(),
-        posterUrl: item.posterUrl,
-        aspectRatio: typeof item.aspectRatio === 'number' ? item.aspectRatio : 1,
-      });
-    }
-  }
+  const album = await normaliseAlbum(req.body.media);
 
   const lead = album[0];
   const primaryUrl = lead?.url ?? mediaUrl;
@@ -740,6 +755,46 @@ export const updatePin = asyncHandler(async (req, res) => {
   if (isAdmin) {
     if (req.body.status && ['active', 'hidden'].includes(req.body.status)) pin.status = req.body.status;
     if (req.body.isFeatured !== undefined) pin.isFeatured = !!req.body.isFeatured;
+  }
+
+  /*
+   * The photograph itself.
+   *
+   * This was not editable at all — EDITABLE_FIELDS was title and caption, so a
+   * client could upload a replacement, be told it had uploaded, send it, and
+   * watch the pin keep its old image. The upload had genuinely succeeded; the
+   * PATCH dropped it on the floor without a word, which is the worst of both.
+   *
+   * Accepts a full `media` album or the flat single-item form, the same two
+   * shapes create accepts, and runs both through the same normaliser — so a
+   * replacement video is verified with Cloudflare rather than trusted, exactly
+   * as it is on the way in.
+   */
+  const replacement = await normaliseAlbum(req.body.media);
+  const lead = replacement[0];
+  const flatUrl = typeof req.body.mediaUrl === 'string' ? req.body.mediaUrl.trim() : null;
+
+  if (lead) {
+    pin.media = replacement;
+    pin.mediaType = lead.type;
+    pin.mediaUrl = lead.url;
+    pin.posterUrl = lead.posterUrl;
+    if (typeof lead.aspectRatio === 'number') pin.aspectRatio = lead.aspectRatio;
+  } else if (flatUrl && flatUrl !== pin.mediaUrl) {
+    pin.mediaUrl = flatUrl;
+    pin.mediaType = req.body.mediaType === 'video' ? 'video' : 'image';
+    if (req.body.posterUrl !== undefined) pin.posterUrl = req.body.posterUrl || undefined;
+    if (typeof req.body.aspectRatio === 'number') pin.aspectRatio = req.body.aspectRatio;
+    // The album mirrors the flat fields, or the detail view would keep showing
+    // the old picture from media[0] while the grid showed the new one.
+    pin.media = [
+      {
+        type: pin.mediaType,
+        url: pin.mediaUrl,
+        posterUrl: pin.posterUrl,
+        aspectRatio: pin.aspectRatio,
+      },
+    ];
   }
 
   await pin.save();
