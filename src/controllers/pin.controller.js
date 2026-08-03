@@ -181,6 +181,20 @@ export const getFeed = asyncHandler(async (req, res) => {
   const topFirst = req.query.sort === 'top';
   const VIEW_FLOOR = 25;
 
+  /*
+   * The clock every score in this scroll is measured against.
+   *
+   * Read from the cursor when there is one, so page two ranks against exactly
+   * the same instant page one did — see the cursor note below for why a moving
+   * clock served the same pins twice.
+   */
+  let anchor = Date.now();
+  if (req.query.cursor) {
+    const at = parseInt(String(req.query.cursor).split('_')[2], 10);
+    if (Number.isFinite(at) && at > 0) anchor = at;
+  }
+  const scoredAt = new Date(anchor);
+
   const pipeline = [
     { $match: match },
     {
@@ -209,7 +223,7 @@ export const getFeed = asyncHandler(async (req, res) => {
                     {
                       $add: [
                         1,
-                        { $divide: [{ $subtract: ['$$NOW', '$createdAt'] }, 1000 * 60 * 60 * 24] },
+                        { $divide: [{ $subtract: [scoredAt, '$createdAt'] }, 1000 * 60 * 60 * 24] },
                       ],
                     },
                   ],
@@ -227,7 +241,7 @@ export const getFeed = asyncHandler(async (req, res) => {
                     1,
                     {
                       $divide: [
-                        { $subtract: ['$$NOW', '$createdAt'] },
+                        { $subtract: [scoredAt, '$createdAt'] },
                         1000 * 60 * 60 * 24,
                       ],
                     },
@@ -250,7 +264,25 @@ export const getFeed = asyncHandler(async (req, res) => {
     },
   ];
 
-  // Cursor: "<score>_<id>" from the previous page's last raw-order item.
+  /*
+   * Cursor: "<score>_<id>_<anchor>" from the previous page's last raw item.
+   *
+   * The anchor is the clock the scores were computed against, and carrying it
+   * is what makes the cursor mean anything. Scores decay with age against
+   * $$NOW, so a pin scored on page one scores *slightly lower* by the time page
+   * two is requested — the cursor's score then matches nothing exactly, the
+   * `score, _id` tiebreak never fires, and every pin that shared that score
+   * falls through the `score < cursor` arm and is served a second time.
+   *
+   * That is invisible on a handful of pins and severe on a real catalogue: 224
+   * of these were created in the same minute, so hundreds share a recency
+   * component and the whole block repeats.
+   *
+   * Freezing the clock for the life of a scroll makes the ranking reproducible,
+   * so the tiebreak works exactly as written. It also means the feed does not
+   * quietly reshuffle underneath somebody mid-scroll, which is the same bug
+   * wearing a different hat.
+   */
   if (req.query.cursor) {
     const [s, id] = String(req.query.cursor).split('_');
     const score = parseFloat(s);
@@ -269,7 +301,8 @@ export const getFeed = asyncHandler(async (req, res) => {
   pipeline.push({ $sort: { score: -1, _id: -1 } }, { $limit: limit });
 
   const raw = await Pin.aggregate(pipeline);
-  const nextCursor = raw.length === limit ? `${raw[raw.length - 1].score}_${raw[raw.length - 1]._id}` : null;
+  const last = raw[raw.length - 1];
+  const nextCursor = raw.length === limit ? `${last.score}_${last._id}_${anchor}` : null;
 
   // Populate authors in one query.
   const authors = await Profile.find({ _id: { $in: raw.map((p) => p.author) } })
