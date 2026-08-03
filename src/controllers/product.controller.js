@@ -7,7 +7,7 @@ import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
 import { getPagination, buildPaginationMeta } from '../utils/paginate.js';
-import { priceLine, skuKeyFor } from '../config/pricing.js';
+import { anyStock, priceLine, skuKeyFor } from '../config/pricing.js';
 import { isValidSubcategory } from '../services/catalogue.service.js';
 import escapeRegex from '../utils/escapeRegex.js';
 
@@ -567,8 +567,40 @@ export const update = asyncHandler(async (req, res) => {
     // Always orderable. Deriving inStock from a count it does not keep would
     // switch off the one kind of listing that exists to be ordered in advance.
     updates.inStock = true;
-  } else if (updates.quantity !== undefined && updates.inStock === undefined) {
-    updates.inStock = Number(updates.quantity) > 0;
+  } else if (
+    (updates.quantity !== undefined || updates.skus !== undefined) &&
+    updates.inStock === undefined
+  ) {
+    /*
+     * Ask the whole listing, not the product row.
+     *
+     * A product with variants keeps its stock per SKU; the product-level count
+     * is a summary. Reading only that marked a listing out of stock while every
+     * one of its variants had stock — and, from a client that sends a quantity
+     * without sending skus, silently reversed the two.
+     *
+     * anyStock is the one place that knows the difference, and the skus a
+     * client just sent are what it has to judge on: the document in hand still
+     * holds the old rows.
+     */
+    updates.inStock = anyStock({
+      ...product.toObject(),
+      ...updates,
+      skus: updates.skus ?? product.skus,
+    });
+  }
+
+  /*
+   * The product-level count follows the variants that define it.
+   *
+   * Otherwise a client that does not render the variant table — the web form
+   * does not — sends its single quantity box and overwrites the sum of rows it
+   * never saw, desynchronising the summary from the stock orders actually
+   * decrement.
+   */
+  const effectiveSkus = updates.skus ?? product.skus ?? [];
+  if (effectiveSkus.length && !preorder) {
+    updates.quantity = effectiveSkus.reduce((sum, row) => sum + (Number(row.quantity) || 0), 0);
   }
 
   /*
