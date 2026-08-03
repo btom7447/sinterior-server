@@ -4,6 +4,43 @@ _Platform-canonical decision log — other repos reference this file._
 
 _Newest first. Every entry: date · decision · why · what it forecloses._
 
+## 2026-08-03 — Delivery is confirmed per supplier, and escrow pays per supplier
+
+An order can span two suppliers. Confirmation was a single boolean on the
+order, and the release loop took **every** held escrow entry on it — so the
+first supplier to mark their half delivered released the lot, paying a
+co-supplier who had shipped nothing. The buyer's protection on that half was
+gone and nobody was told. Proven with a walkthrough before it was touched.
+
+Approvals are now recorded per supplier on both sides, and a supplier's escrow
+releases only when that supplier has confirmed delivery **and** the buyer has
+confirmed receipt of it. The order reaches `delivered` only when every supplier
+is settled. The two order-level booleans survive as summary flags meaning "all
+suppliers", which is what every client already reads them as and exactly how
+they behaved on a single-supplier order.
+
+Release happens as soon as a supplier is settled rather than when the order
+completes. Waiting would hold a supplier who delivered hostage to one who never
+does — the mirror image of the bug being fixed — and the atomic claim makes
+running it on every approval idempotent.
+
+The rule lives in `config/delivery.js` with tests, for the same reason line
+pricing does: it decides who gets paid, and that should be checkable without a
+database or an HTTP request.
+
+This became urgent rather than theoretical when the catalogue went to two
+suppliers and checkout started grouping the cart by supplier. Before that,
+almost every order was single-supplier and the boolean was accidentally
+correct.
+
+Also fixed alongside: the COD branch decided an order was cash by checking that
+no escrow was still held, which after a release is always true — an online-paid
+order would have been charged a platform COD fee. It now asks whether the order
+ever had escrow.
+
+Forecloses: no order-level delivery flag may gate a payout. Anything deciding
+money on a multi-supplier order asks per supplier.
+
 ## 2026-08-02 — The category list is data an admin owns, not a constant in three files
 
 Categories were a hardcoded array in the server config, a second array in the
