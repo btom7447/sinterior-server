@@ -8,6 +8,7 @@ import {
   getUser,
   updateUser,
   getOrders,
+  getOrderDetail,
   getProducts,
   updateProduct,
   getBlogPosts,
@@ -69,6 +70,7 @@ router.patch('/users/:id', updateUser);
 
 // Orders
 router.get('/orders', getOrders);
+router.get('/orders/:id', getOrderDetail);
 
 // Products
 router.get('/products', getProducts);

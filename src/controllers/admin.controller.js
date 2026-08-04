@@ -391,6 +391,36 @@ export const updateUser = asyncHandler(async (req, res) => {
 // ORDERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/**
+ * One order, in full, for an admin.
+ *
+ * There was no way to look at an order. The list showed a row; disputes carry
+ * an orderId and nothing resolved it; and an admin resolving a dispute in the
+ * buyer's favour now moves real money out of escrow — against an order they
+ * could not open. Deciding a refund from a table row is deciding it blind.
+ *
+ * Escrow entries come with it, because "was this paid, is it held, has any of
+ * it already been refunded" is the question the refund decision turns on.
+ */
+export const getOrderDetail = asyncHandler(async (req, res) => {
+  const order = await Order.findById(req.params.id)
+    .populate('buyerId', 'fullName avatarUrl phone city state')
+    .populate('items.supplierId', 'fullName avatarUrl')
+    .populate('items.productId', 'name images unit')
+    .lean();
+  if (!order) throw new AppError('Order not found.', 404);
+
+  const escrow = await EscrowEntry.find({ entityType: 'order', entityId: order._id })
+    .select('amount status heldAt releasedAt refundedAmount sellerProfileId feeAmount netAmount')
+    .lean();
+
+  res.json({
+    success: true,
+    data: { order: { ...order, buyer: order.buyerId || {} }, escrow },
+    message: 'Order retrieved.',
+  });
+});
+
 export const getOrders = asyncHandler(async (req, res) => {
   const { page, limit, skip } = getPagination(req.query);
   const filter = {};
