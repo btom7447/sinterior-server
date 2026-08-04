@@ -5,6 +5,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
 
 import { resolveUploadUrl } from '../utils/resolveUrl.js';
+import { parseCoverage } from '../config/nigeria.js';
 
 // ── PATCH /api/v1/suppliers/onboarding ──────────────────────────────────────
 export const updateOnboarding = asyncHandler(async (req, res) => {
@@ -23,6 +24,14 @@ export const updateOnboarding = asyncHandler(async (req, res) => {
   ALLOWED.forEach((field) => {
     if (req.body[field] !== undefined) updates[field] = req.body[field];
   });
+
+  // One shape reaches the database whatever the client sent. The web dashboard
+  // posts a comma-separated string from a free-text box, the app posts a list of
+  // canonical names; both become a canonical list here, so no screen has to
+  // parse prose to find out where a supplier delivers.
+  if (updates.coverageStates !== undefined) {
+    updates.coverageStates = parseCoverage(updates.coverageStates);
+  }
 
   if (Object.keys(updates).length === 0) {
     throw new AppError('No valid fields provided for update.', 400);

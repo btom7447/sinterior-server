@@ -428,7 +428,10 @@ export const getById = asyncHandler(async (req, res) => {
           ? {
               leadTime: seller.deliveryDays ?? null,
               minOrderValue: seller.minOrderValue ?? null,
-              coverage: seller.coverageStates ?? null,
+              // Always a list now, even for a supplier who only covers one
+              // state — a buyer-facing shape that changes with the number of
+              // states is a shape every client has to branch on.
+              coverage: seller.coverageStates ?? [],
               ratesByState: seller.shippingRates ?? {},
               couriers: (seller.courierServices ?? []).map((c) => ({
                 name: c.name ?? null,

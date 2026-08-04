@@ -64,7 +64,12 @@ router.patch(
     body('deliveryOptions').optional().isArray(),
     body('minOrderValue').optional().isFloat({ min: 0 }),
     body('deliveryDays').optional().isString().trim(),
-    body('coverageStates').optional().isString().trim(),
+    // Either shape: the deployed web dashboard still sends a comma-separated
+    // string, and rejecting it would break saving a business profile from the
+    // web the moment this ships. The controller normalises both.
+    body('coverageStates').optional().custom(
+      (value) => typeof value === 'string' || Array.isArray(value)
+    ).withMessage('coverageStates must be a state name or a list of them'),
     body('businessAddress').optional().isString().trim(),
     body('whatsappNumber').optional().isString().trim(),
     body('bankName').optional().isString().trim(),

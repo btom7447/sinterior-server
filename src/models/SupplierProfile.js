@@ -30,7 +30,11 @@ const supplierProfileSchema = new mongoose.Schema(
     deliveryOptions: { type: [String], default: [] },
     minOrderValue: { type: Number, min: 0 },
     deliveryDays: { type: String, trim: true },
-    coverageStates: { type: String, trim: true },
+    // An array since 2026-08-04. It was a single trimmed string with a plural
+    // name, offered as a free-text box on the web — so suppliers who deliver to
+    // several states wrote "Lagos, Ogun, Oyo" into a field the app then tried to
+    // resolve as one state name, and failed. See config/nigeria.js.
+    coverageStates: { type: [String], default: [] },
 
     // Shipping — per-state pricing
     shippingRates: {
