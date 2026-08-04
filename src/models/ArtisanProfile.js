@@ -64,6 +64,20 @@ const artisanProfileSchema = new mongoose.Schema(
     businessName:    { type: String, trim: true, maxlength: 100 },
     businessTagline: { type: String, trim: true, maxlength: 200 },
 
+    /**
+     * What a day of this artisan's time costs.
+     *
+     * The onboarding route has validated `pricePerDay` since it was written,
+     * but the field was never added here and never listed in the controller's
+     * ALLOWED array — so every rate anybody sent passed validation and was
+     * then silently dropped. Clients compare artisans on price and had nothing
+     * to compare.
+     */
+    pricePerDay: {
+      type: Number,
+      min: 0,
+    },
+
     experienceYears: {
       type: Number,
       min: [0, 'Experience years cannot be negative'],

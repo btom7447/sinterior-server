@@ -230,6 +230,7 @@ export const updateOnboarding = asyncHandler(async (req, res) => {
     'city',
     'state',
     'address',
+    'pricePerDay',
     'experienceYears',
     'isAvailable',
     'portfolio',
