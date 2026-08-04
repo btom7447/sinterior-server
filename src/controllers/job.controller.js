@@ -208,6 +208,30 @@ export const getJob = asyncHandler(async (req, res) => {
     .populate('clientId', 'fullName avatarUrl city phone userId')
     .populate('artisanId', 'fullName avatarUrl city phone userId');
   if (!job) throw new AppError('Job not found.', 404);
+
+  /*
+   * Only the two people on the job may read it.
+   *
+   * `protect` was the only guard here, so any signed-in account could fetch any
+   * job by id and receive both parties' names, cities and PHONE NUMBERS along
+   * with the description, location and amount. Every action endpoint below
+   * checks ownership through loadJobAndAuth; this read was the one that did
+   * not.
+   *
+   * 404 rather than 403, so the endpoint does not confirm that a given id is a
+   * real job to somebody who has no business knowing.
+   */
+  const profile = await Profile.findOne({ userId: req.user.id }).select('_id');
+  const onThisJob =
+    !!profile &&
+    [job.clientId?._id, job.artisanId?._id]
+      .filter(Boolean)
+      .some((partyId) => String(partyId) === String(profile._id));
+
+  if (!onThisJob && req.user.role !== 'admin') {
+    throw new AppError('Job not found.', 404);
+  }
+
   res.status(200).json({ success: true, data: { job }, message: 'Job retrieved.' });
 });
 
