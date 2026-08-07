@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import Message from '../models/Message.js';
 import Profile from '../models/Profile.js';
+import Block from '../models/Block.js';
 import AppError from '../utils/AppError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { sendSuccess, sendPaginated } from '../utils/apiResponse.js';
@@ -1136,6 +1137,27 @@ export const sendMessage = asyncHandler(async (req, res) => {
 
   if (receiverId.toString() === senderProfile._id.toString()) {
     throw new AppError('You cannot send a message to yourself.', 400);
+  }
+
+  /*
+   * A block stops the message, in both directions.
+   *
+   * Checked here rather than only in the UI, because a block that a client can
+   * route around by holding a stale conversation open is not a block — and the
+   * stores are asking for the guarantee, not the button.
+   *
+   * The refusal does not say which way it runs. "They are not accepting
+   * messages" is true whichever party blocked, and telling somebody they have
+   * been blocked is how a block becomes an escalation.
+   */
+  const blocked = await Block.exists({
+    $or: [
+      { blocker: senderProfile._id, blocked: receiverId },
+      { blocker: receiverId, blocked: senderProfile._id },
+    ],
+  });
+  if (blocked) {
+    throw new AppError('This person is not accepting messages.', 403);
   }
 
   // Verify receiver exists

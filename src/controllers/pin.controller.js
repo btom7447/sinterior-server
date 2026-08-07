@@ -19,6 +19,7 @@ import {
   MAX_VIDEO_SECONDS,
 } from '../services/stream.service.js';
 import { resolvePinAlbum, resolveUploadUrl } from '../utils/resolveUrl.js';
+import { hiddenProfileIds } from './block.controller.js';
 
 const FEED_LIMIT_MAX = 50;
 const EDITABLE_FIELDS = ['title', 'caption'];
@@ -110,6 +111,14 @@ export const getFeed = asyncHandler(async (req, res) => {
   // Free-text search (title/caption/tags) — $text must live in the pipeline's first $match.
   if (req.query.q) match.$text = { $search: String(req.query.q).slice(0, 100) };
 
+  /*
+   * Nothing from anyone either side of a block.
+   *
+   * Both directions: somebody who blocked you should not have their work shown
+   * to you either, or a block becomes a way to keep watching while refusing to
+   * be watched. Applied to the $match so it costs a filtered index scan rather
+   * than a post-filter that would leave short pages.
+   */
   // Personalization inputs — cheap lookups, only when authenticated.
   let followedIds = [];
   let affinityTrades = [];
@@ -121,6 +130,12 @@ export const getFeed = asyncHandler(async (req, res) => {
     const profile = await Profile.findOne({ userId: req.user.id }).select('_id preferredTrades');
     if (profile) {
       viewerId = profile._id;
+      const hidden = await hiddenProfileIds(profile._id);
+      if (hidden.length) {
+        match.author = match.author
+          ? { $eq: match.author, $nin: hidden.map((id) => new mongoose.Types.ObjectId(id)) }
+          : { $nin: hidden.map((id) => new mongoose.Types.ObjectId(id)) };
+      }
       const [follows, recentSaves, mutes] = await Promise.all([
         Follow.find({ follower: profile._id }).select('followed').lean(),
         BoardPin.find({ owner: profile._id })
